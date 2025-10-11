@@ -369,7 +369,7 @@
 .pc-details {
   width: 100%;
   position: absolute;
-  top: 2.2em;
+  top: 0.8em;
   display: flex;
   flex-direction: column;
   mix-blend-mode: normal; /* ensure readable text over image */
@@ -380,13 +380,17 @@
   font-weight: 600;
   margin: 0;
   /* Tighter scaling for small cards */
-  font-size: clamp(1em, 1.35em, 1.8em);
+  font-size: clamp(0.75em, 1em, 1.3em);
   background-image: linear-gradient(to bottom, #fff, #6f6fbe);
   background-size: 1em 1.5em;
   -webkit-text-fill-color: transparent;
   background-clip: text;
   -webkit-background-clip: text;
   text-shadow: 0 2px 6px rgba(0,0,0,0.35);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 0.5em;
 }
 
 .pc-details p {
@@ -407,7 +411,7 @@
 
 /* Container-query adjustments for very small cards */
 @container (max-width: 320px) {
-  .pc-details { top: 1.6em; }
+  .pc-details { top: 0.6em; }
   .pc-details h3 { font-size: clamp(0.95em, 1.15em, 1.4em); }
   .pc-details p { top: -0.3em; font-size: clamp(0.8em, 0.95em, 1em); }
 }
@@ -444,7 +448,7 @@
   }
 
   .pc-details {
-    top: 2.2em;
+    top: 0.8em;
   }
 
   .pc-user-info {
@@ -470,7 +474,7 @@
   }
 
   .pc-details {
-    top: 1.8em;
+    top: 0.6em;
   }
 
   .pc-user-info {

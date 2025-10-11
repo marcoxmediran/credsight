@@ -5,6 +5,7 @@ import type React from "react"
 import { useState, useCallback, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { AnimatedCard } from "@/components/AnimatedCard"
 import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -12,6 +13,7 @@ import { Badge } from "@/components/ui/badge"
 import { ArrowLeft, Upload, Download, ArrowUpDown, Search, ChevronLeft, ChevronRight } from "lucide-react"
 import Link from "next/link"
 import LiquidEther from "@/components/LiquidEther"
+import ModelEvaluationPlaceholder from "@/components/ModelEvaluationPlaceholder"
 
 type TransactionData = {
   TransactionID: number
@@ -248,23 +250,19 @@ export default function AnalyzePage() {
 
       {/* Page Content */}
       <div className="relative z-10">
-      <div className="fixed left-4 top-4 z-50">
-        <Link href="/">
-          <Button variant="outline" size="sm">
-            <ArrowLeft className="mr-2 h-4 w-4" />
-            Back to Home
-          </Button>
-        </Link>
-      </div>
+      <ScrollBackButton />
 
       <div className="mx-auto max-w-7xl px-4 py-12">
-        <h1 className="mb-8 text-center text-4xl font-bold md:text-5xl bg-gradient-to-b from-white/90 via-white/70 to-purple-500 bg-clip-text text-transparent">Fraud Detection Analysis</h1>
+        <AnimatedCard>
+          <h1 className="mb-8 text-center text-4xl font-bold md:text-5xl bg-gradient-to-b from-white/90 via-white/70 to-purple-500 bg-clip-text text-transparent">Fraud Detection Analysis</h1>
+        </AnimatedCard>
 
-        <Card className="mb-8">
-          <CardHeader>
-            <CardTitle>Upload Transaction Data</CardTitle>
-            <CardDescription>Upload a CSV file containing TransactionID and isFraud columns</CardDescription>
-          </CardHeader>
+        <AnimatedCard>
+          <Card className="mb-8">
+            <CardHeader>
+              <CardTitle>Upload Transaction Data</CardTitle>
+              <CardDescription>Upload a CSV file containing TransactionID and isFraud columns</CardDescription>
+            </CardHeader>
           <CardContent>
             <div
               onDragOver={handleDragOver}
@@ -284,8 +282,9 @@ export default function AnalyzePage() {
               </label>
               <input id="file-upload" type="file" accept=".csv" onChange={handleFileInputChange} className="hidden" />
             </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        </AnimatedCard>
 
         {data.length > 0 && (
           <>
@@ -330,9 +329,10 @@ export default function AnalyzePage() {
               </CardContent>
             </Card>
 
-            <Card className="mb-8">
-              <CardHeader>
-                <CardTitle>Transaction Results</CardTitle>
+            <AnimatedCard delay={200}>
+              <Card className="mb-8">
+                <CardHeader>
+                  <CardTitle>Transaction Results</CardTitle>
                 <CardDescription>
                   Showing {startIndex + 1}-{Math.min(endIndex, filteredData.length)} of {filteredData.length}{" "}
                   transactions
@@ -432,39 +432,75 @@ export default function AnalyzePage() {
                     </div>
                   </div>
                 )}
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
+            </AnimatedCard>
 
-            <Card>
-              <CardHeader>
-                <CardTitle>Statistics Overview</CardTitle>
-                <CardDescription>Summary of fraud detection results</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="grid gap-4 md:grid-cols-4">
-                  <div className="rounded-lg border border-border bg-card p-4">
-                    <p className="text-sm text-muted-foreground">Total Records</p>
-                    <p className="mt-2 text-3xl font-bold">{stats.total}</p>
+            <AnimatedCard delay={400}>
+              <Card>
+                <CardHeader>
+                  <CardTitle>Statistics Overview</CardTitle>
+                  <CardDescription>Summary of fraud detection results</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid gap-4 md:grid-cols-4">
+                    <div className="rounded-lg border border-border bg-card p-4">
+                      <p className="text-sm text-muted-foreground">Total Records</p>
+                      <p className="mt-2 text-3xl font-bold">{stats.total}</p>
+                    </div>
+                    <div className="rounded-lg border border-border bg-card p-4">
+                      <p className="text-sm text-muted-foreground">Legitimate</p>
+                      <p className="mt-2 text-3xl font-bold text-green-500">{stats.legitimate}</p>
+                    </div>
+                    <div className="rounded-lg border border-border bg-card p-4">
+                      <p className="text-sm text-muted-foreground">Fraud</p>
+                      <p className="mt-2 text-3xl font-bold text-red-500">{stats.fraud}</p>
+                    </div>
+                    <div className="rounded-lg border border-border bg-card p-4">
+                      <p className="text-sm text-muted-foreground">Fraud Rate</p>
+                      <p className="mt-2 text-3xl font-bold">{stats.fraudRate}%</p>
+                    </div>
                   </div>
-                  <div className="rounded-lg border border-border bg-card p-4">
-                    <p className="text-sm text-muted-foreground">Legitimate</p>
-                    <p className="mt-2 text-3xl font-bold text-green-500">{stats.legitimate}</p>
-                  </div>
-                  <div className="rounded-lg border border-border bg-card p-4">
-                    <p className="text-sm text-muted-foreground">Fraud</p>
-                    <p className="mt-2 text-3xl font-bold text-red-500">{stats.fraud}</p>
-                  </div>
-                  <div className="rounded-lg border border-border bg-card p-4">
-                    <p className="text-sm text-muted-foreground">Fraud Rate</p>
-                    <p className="mt-2 text-3xl font-bold">{stats.fraudRate}%</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
+            </AnimatedCard>
+
+            {/* Model Evaluation Section */}
+            <AnimatedCard delay={600}>
+              <ModelEvaluationPlaceholder />
+            </AnimatedCard>
           </>
         )}
       </div>
     </div>
+    </div>
+  )
+}
+
+function ScrollBackButton() {
+  const [isScrolled, setIsScrolled] = useState(false)
+
+  useEffect(() => {
+    const handleScroll = () => {
+      setIsScrolled(window.scrollY > 100)
+    }
+
+    window.addEventListener('scroll', handleScroll)
+    return () => window.removeEventListener('scroll', handleScroll)
+  }, [])
+
+  return (
+    <div className="fixed left-4 top-4 z-50">
+      <Link href="/">
+        <Button 
+          variant="outline" 
+          size={isScrolled ? "icon" : "sm"}
+          className="transition-all duration-300 cursor-pointer"
+        >
+          <ArrowLeft className={`h-4 w-4 ${isScrolled ? '' : 'mr-2'}`} />
+          {!isScrolled && 'Back to Home'}
+        </Button>
+      </Link>
     </div>
   )
 }

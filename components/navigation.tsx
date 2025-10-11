@@ -38,25 +38,47 @@ export function Navigation() {
         <div className="hidden items-center gap-8 md:flex">
           <button
             onClick={() => scrollToSection("features")}
-            className="text-sm text-foreground/80 transition-colors hover:text-foreground"
+            className="text-sm text-foreground/80 transition-colors hover:text-foreground cursor-pointer"
           >
             Features
           </button>
           <button
             onClick={() => scrollToSection("how-it-works")}
-            className="text-sm text-foreground/80 transition-colors hover:text-foreground"
+            className="text-sm text-foreground/80 transition-colors hover:text-foreground cursor-pointer"
           >
             How It Works
           </button>
           <button
             onClick={() => scrollToSection("about")}
-            className="text-sm text-foreground/80 transition-colors hover:text-foreground"
+            className="text-sm text-foreground/80 transition-colors hover:text-foreground cursor-pointer"
           >
             About
           </button>
-          <Button size="sm" asChild>
-            <Link href="/analyze">Get Started</Link>
-          </Button>
+          <Link href="/analyze">
+            <button className="header-premium-button px-4 py-2 text-sm font-medium">
+              Get Started
+            </button>
+          </Link>
+          <style jsx>{`
+            .header-premium-button {
+              background: transparent;
+              color: #fff;
+              letter-spacing: 0.5px;
+              border: 1px solid rgba(255, 255, 255, 0.2);
+              border-radius: 6px;
+              position: relative;
+              overflow: hidden;
+              cursor: pointer;
+              transition: all 0.3s ease;
+            }
+            
+            .header-premium-button:hover {
+              background: linear-gradient(to right, #C471ED, #12C2E9);
+              border-color: transparent;
+              transform: scale(1.02);
+              box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+            }
+          `}</style>
         </div>
 
         {/* Mobile Menu Button */}
@@ -71,25 +93,47 @@ export function Navigation() {
           <div className="flex flex-col gap-4 px-4 py-6">
             <button
               onClick={() => scrollToSection("features")}
-              className="text-left text-sm text-foreground/80 transition-colors hover:text-foreground"
+              className="text-left text-sm text-foreground/80 transition-colors hover:text-foreground cursor-pointer"
             >
               Features
             </button>
             <button
               onClick={() => scrollToSection("how-it-works")}
-              className="text-left text-sm text-foreground/80 transition-colors hover:text-foreground"
+              className="text-left text-sm text-foreground/80 transition-colors hover:text-foreground cursor-pointer"
             >
               How It Works
             </button>
             <button
               onClick={() => scrollToSection("about")}
-              className="text-left text-sm text-foreground/80 transition-colors hover:text-foreground"
+              className="text-left text-sm text-foreground/80 transition-colors hover:text-foreground cursor-pointer"
             >
               About
             </button>
-            <Button size="sm" className="w-full" asChild>
-              <Link href="/analyze">Get Started</Link>
-            </Button>
+            <Link href="/analyze">
+              <button className="mobile-premium-button w-full px-4 py-2 text-sm font-medium">
+                Get Started
+              </button>
+            </Link>
+            <style jsx>{`
+              .mobile-premium-button {
+                background: transparent;
+                color: #fff;
+                letter-spacing: 0.5px;
+                border: 1px solid rgba(255, 255, 255, 0.2);
+                border-radius: 6px;
+                position: relative;
+                overflow: hidden;
+                cursor: pointer;
+                transition: all 0.3s ease;
+              }
+              
+              .mobile-premium-button:hover {
+                background: linear-gradient(to right, #C471ED, #12C2E9);
+                border-color: transparent;
+                transform: scale(1.02);
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+              }
+            `}</style>
           </div>
         </div>
       )}
