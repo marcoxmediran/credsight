@@ -32,8 +32,9 @@ export async function GET(
     console.error('Explanation API error:', error)
     
     // Fallback mock explanation for development
+    const { transactionId: txId } = await params
     const mockExplanation = {
-      transaction_id: parseInt(transactionId),
+      transaction_id: parseInt(txId),
       explanations: {
         rgcn: {
           model: "R-GCN",

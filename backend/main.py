@@ -32,6 +32,36 @@ async def health_check():
         "message": "RGCN model ready for analysis"
     }
 
+@app.get("/explain/{transaction_id}")
+async def explain_transaction(transaction_id: int, model_type: str = "both"):
+    """
+    Get explanation for a specific transaction prediction.
+    Returns mock explanation data for now.
+    """
+    try:
+        # Simplified explanation data - only what's needed
+        explanation = {
+            "transaction_id": transaction_id,
+            "explanations": {
+                "rgcn": {
+                    "model": "R-GCN",
+                    "prediction": 1 if transaction_id % 3 == 0 else 0,
+                    "fraud_probability": 0.75 if transaction_id % 3 == 0 else 0.25
+                },
+                "ergcn": {
+                    "model": "ERGCN", 
+                    "prediction": 0 if transaction_id % 2 == 0 else 1,
+                    "fraud_probability": 0.3 if transaction_id % 2 == 0 else 0.8
+                }
+            }
+        }
+        
+        return explanation
+        
+    except Exception as e:
+        print(f"Error in explain_transaction: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Explanation failed: {str(e)}")
+
 @app.post("/analyze", response_model=AnalysisResult)
 async def analyze_transactions_endpoint(batch: TransactionBatch):
     """
@@ -48,19 +78,13 @@ async def analyze_transactions_endpoint(batch: TransactionBatch):
         # Convert TransactionBatch to CSV format
         transactions_data = []
         for transaction in batch.transactions:
-            tx_dict = {
-                "TransactionID": transaction.TransactionID,
-                "isFraud": transaction.TrueLabel,  # Use TrueLabel as isFraud for RGCN
-                # Add default values for required features (RGCN will handle missing ones)
-                "C14": 0, "C1": 0, "V317": 0, "V308": 0, "card6": "unknown", "V306": 0, "V126": 0,
-                "C11": 0, "C6": 0, "V282": 0, "TransactionAmt": 0, "V53": 0, "P_emaildomain": "unknown",
-                "card5": 0, "C13": 0, "V35": 0, "V280": 0, "V279": 0, "card2": 0, "V258": 0, "M6": "unknown",
-                "V90": 0, "V82": 0, "TransactionDT": 0, "C2": 0, "V87": 0, "V294": 0, "C12": 0, "V313": 0, "id_06": "unknown"
-            }
+            # Use all attributes from the transaction object
+            tx_dict = transaction.dict()
             transactions_data.append(tx_dict)
         
         # Convert to DataFrame and then to CSV string
         df = pd.DataFrame(transactions_data)
+        print(f"Received columns: {list(df.columns)}")
         csv_data = df.to_csv(index=False)
         
         print(f"Processing {len(batch.transactions)} transactions with RGCN model...")
@@ -71,42 +95,57 @@ async def analyze_transactions_endpoint(batch: TransactionBatch):
         # Convert RGCN results to the expected API format
         processed_transactions = []
         for result in rgcn_results['transactions']:
+            # Handle both protocols: with and without ground truth
+            true_label = None
+            if result['Actual_isFraud'] is not None and not pd.isna(result['Actual_isFraud']):
+                true_label = int(result['Actual_isFraud'])
+            
+            # Handle NaN TransactionID
+            transaction_id = result['TransactionID']
+            if pd.isna(transaction_id):
+                continue  # Skip rows with missing TransactionID
+            
             processed_transactions.append({
-                "TransactionID": result['TransactionID'],
-                "TrueLabel": result['Actual_isFraud'],
-                "RGCN_Prediction": result['Predicted_isFraud'],
-                "RGCN_Confidence": result['Fraud_Probability'],
+                "TransactionID": int(transaction_id),
+                "TrueLabel": true_label,
+                "RGCN_Prediction": int(result['Predicted_isFraud']),
+                "RGCN_Confidence": float(result['Fraud_Probability']),
                 # ERGCN not yet implemented - set to null
                 "ERGCN_Prediction": None,
                 "ERGCN_Confidence": None
             })
         
         # Prepare final response
+        # Handle None metrics for no ground truth cases
+        rgcn_metrics = rgcn_results['metrics']
         result = AnalysisResult(
             transactions=processed_transactions,
             metrics={
                 "RGCN": {
-                    "recall": rgcn_results['metrics']['recall'],
-                    "f1": rgcn_results['metrics']['f1'],
-                    "auc": rgcn_results['metrics']['auc']
+                    "recall": rgcn_metrics['recall'],
+                    "f1": rgcn_metrics['f1'],
+                    "auc": rgcn_metrics['auc']
                 },
                 # ERGCN not yet implemented - set to null
                 "ERGCN": None, 
                 "summary": {
-                    "total_transactions": rgcn_results['summary']['total_transactions'],
-                    "fraud_detected_by_RGCN": rgcn_results['summary']['fraud_detected_by_RGCN'],
-                    "legitimate_detected_by_RGCN": rgcn_results['summary']['legitimate_detected_by_RGCN'],
-                    "fraud_rate_of_RGCN": rgcn_results['summary']['fraud_rate']
+                    "total_transactions": int(rgcn_results['summary']['total_transactions']),
+                    "fraud_detected_by_RGCN": int(rgcn_results['summary']['fraud_detected_by_RGCN']),
+                    "legitimate_detected_by_RGCN": int(rgcn_results['summary']['legitimate_detected_by_RGCN']),
+                    "fraud_rate_of_RGCN": float(rgcn_results['summary']['fraud_rate'])
                 }
             }
         )
         
-        print("=====================================================================")
-        print("---------------------------------------------------------------------")
-        print(f"Analysis complete. Processed {len(batch.transactions)} transactions.")
-        print(f"Recall: {result.metrics['RGCN']['recall']}, F1: {result.metrics['RGCN']['f1']}, AUC: {result.metrics['RGCN']['auc']}")
-        print("=====================================================================")
-        print("---------------------------------------------------------------------")
+        # Print completion message with proper None handling
+        f1 = result.metrics['RGCN']['f1']
+        recall = result.metrics['RGCN']['recall']
+        auc = result.metrics['RGCN']['auc']
+        
+        if f1 is not None and recall is not None and auc is not None:
+            print(f"Analysis complete. F1: {f1:.3f}, Recall: {recall:.3f}, AUC: {auc:.3f}")
+        else:
+            print("Analysis complete. No ground truth available - metrics not calculated.")
         return result
         
     except Exception as e:

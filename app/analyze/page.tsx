@@ -21,6 +21,7 @@ type TransactionData = {
   TrueLabel?: number
   RGCN?: number
   ERGCN?: number
+  [key: string]: any  // Allow any additional CSV columns
 }
 
 type ModelMetrics = {
@@ -38,7 +39,7 @@ type AnalysisResult = {
   }
 }
 
-type FilterType = "all" | "legit" | "fraud" | "both_correct" | "both_incorrect" | "rgcn_correct" | "ergcn_correct" | "rgcn_incorrect" | "ergcn_incorrect"
+type FilterType = "all" | "legit" | "fraud" | "both_correct" | "both_incorrect" | "rgcn_correct" | "ergcn_correct" | "rgcn_incorrect" | "ergcn_incorrect" | "rgcn_fraud" | "rgcn_legit" | "ergcn_fraud" | "ergcn_legit"
 
 // Example transaction data (for demonstration purposes)
 const EXAMPLE_DATA: TransactionData[] = [
@@ -185,13 +186,25 @@ export default function AnalyzePage() {
             .map((row) => {
               try {
                 const values = row.split(',').map(v => v.trim())
-                const transaction: TransactionData = {
+                const transaction: any = {
                   TransactionID: Number.parseInt(values[transactionIdIndex]) || 0,
                 }
                 
                 if (hasGroundTruthData) {
-                  transaction.TrueLabel = values[isFraudIndex]?.toLowerCase() === "true" || values[isFraudIndex] === "1" ? 1 : 0
+                  const fraudValue = values[isFraudIndex]?.toLowerCase() === "true" || values[isFraudIndex] === "1" ? 1 : 0
+                  transaction.TrueLabel = fraudValue  // For frontend compatibility
+                  transaction.isFraud = fraudValue    // For backend compatibility
                 }
+                
+                // Parse all other columns from CSV
+                headers.forEach((header, index) => {
+                  if (index !== transactionIdIndex && index !== isFraudIndex) {
+                    const value = values[index]
+                    // Try to parse as number, otherwise keep as string
+                    const numValue = Number(value)
+                    transaction[header] = isNaN(numValue) ? value : numValue
+                  }
+                })
                 
                 return transaction
               } catch {
@@ -287,6 +300,14 @@ export default function AnalyzePage() {
       result = result.filter((item) => item.RGCN !== item.TrueLabel)
     } else if (filterType === "ergcn_incorrect" && analysisResult) {
       result = result.filter((item) => item.ERGCN !== item.TrueLabel)
+    } else if (filterType === "rgcn_fraud" && analysisResult) {
+      result = result.filter((item) => item.RGCN === 1)
+    } else if (filterType === "rgcn_legit" && analysisResult) {
+      result = result.filter((item) => item.RGCN === 0)
+    } else if (filterType === "ergcn_fraud" && analysisResult) {
+      result = result.filter((item) => item.ERGCN === 1)
+    } else if (filterType === "ergcn_legit" && analysisResult) {
+      result = result.filter((item) => item.ERGCN === 0)
     }
 
     const normalizedQuery = searchQuery.trim()
@@ -466,11 +487,22 @@ export default function AnalyzePage() {
     fraudRate: hasGroundTruth && filteredData.length > 0
       ? ((filteredData.filter((item) => item.TrueLabel === 1).length / filteredData.length) * 100).toFixed(2)
       : null,
-    rgcnAccuracy: analysisResult && hasGroundTruth
-      ? ((filteredData.filter((item) => item.RGCN === item.TrueLabel).length / filteredData.length) * 100).toFixed(2)
+    // Calculate Precision = True Positives / (True Positives + False Positives)
+    rgcnPrecision: analysisResult && hasGroundTruth
+      ? (() => {
+          const truePositives = filteredData.filter((item) => item.RGCN === 1 && item.TrueLabel === 1).length
+          const falsePositives = filteredData.filter((item) => item.RGCN === 1 && item.TrueLabel === 0).length
+          const totalPositivePredictions = truePositives + falsePositives
+          return totalPositivePredictions > 0 ? ((truePositives / totalPositivePredictions) * 100).toFixed(2) : "0.00"
+        })()
       : null,
-    ergcnAccuracy: analysisResult && hasGroundTruth
-      ? ((filteredData.filter((item) => item.ERGCN === item.TrueLabel).length / filteredData.length) * 100).toFixed(2)
+    ergcnPrecision: analysisResult && hasGroundTruth
+      ? (() => {
+          const truePositives = filteredData.filter((item) => item.ERGCN === 1 && item.TrueLabel === 1).length
+          const falsePositives = filteredData.filter((item) => item.ERGCN === 1 && item.TrueLabel === 0).length
+          const totalPositivePredictions = truePositives + falsePositives
+          return totalPositivePredictions > 0 ? ((truePositives / totalPositivePredictions) * 100).toFixed(2) : "0.00"
+        })()
       : null,
     // Model predictions for both protocols
     rgcnLegitimate: analysisResult ? filteredData.filter((item) => item.RGCN === 0).length : null,
@@ -607,6 +639,14 @@ export default function AnalyzePage() {
                             <SelectItem value="ergcn_incorrect">ERGCN Incorrect</SelectItem>
                           </>
                         )}
+                        {analysisResult && !hasGroundTruth && (
+                          <>
+                            <SelectItem value="rgcn_fraud">R-GCN Flagged as Fraud</SelectItem>
+                            <SelectItem value="rgcn_legit">R-GCN Flagged as Legitimate</SelectItem>
+                            <SelectItem value="ergcn_fraud">ERGCN Flagged as Fraud</SelectItem>
+                            <SelectItem value="ergcn_legit">ERGCN Flagged as Legitimate</SelectItem>
+                          </>
+                        )}
                       </SelectContent>
                     </Select>
 
@@ -677,7 +717,9 @@ export default function AnalyzePage() {
                                 </div>
                               </TableHead>
                             )}
-                            <TableHead className={`text-center ${!hasGroundTruth ? 'w-[25%]' : 'w-[15%]'}`}>Confidence Details</TableHead>
+                            <TableHead className={`text-center ${!hasGroundTruth ? 'w-[25%]' : 'w-[15%]'}`}>
+                              Confidence Details
+                            </TableHead>
                           </>
                         )}
                       </TableRow>
@@ -828,22 +870,22 @@ export default function AnalyzePage() {
                         {/* R-GCN Results Column */}
                         {analysisResult && (
                           <div className="space-y-4 px-6">
-                            <h3 className="text-lg font-semibold text-blue-500 text-center">R-GCN Results</h3>
+                            <h3 className="text-lg font-semibold text-blue-500 text-center">R-GCN Predictions</h3>
                             <div className="space-y-3">
                               <div className="rounded-lg border border-border bg-card p-4">
                                 <p className="text-sm text-muted-foreground">Precision</p>
-                                <p className="mt-2 text-2xl font-bold text-blue-500">{stats.rgcnAccuracy}%</p>
+                                <p className="mt-2 text-2xl font-bold text-blue-500">{stats.rgcnPrecision}%</p>
                               </div>
                               <div className="rounded-lg border border-border bg-card p-4">
-                                <p className="text-sm text-muted-foreground">Legitimate</p>
+                                <p className="text-sm text-muted-foreground">Predicted Legitimate</p>
                                 <p className="mt-2 text-2xl font-bold text-green-500">{stats.rgcnLegitimate}</p>
                               </div>
                               <div className="rounded-lg border border-border bg-card p-4">
-                                <p className="text-sm text-muted-foreground">Fraud</p>
+                                <p className="text-sm text-muted-foreground">Predicted Fraud</p>
                                 <p className="mt-2 text-2xl font-bold text-red-500">{stats.rgcnFraud}</p>
                               </div>
                               <div className="rounded-lg border border-border bg-card p-4">
-                                <p className="text-sm text-muted-foreground">Fraud Rate</p>
+                                <p className="text-sm text-muted-foreground">Predicted Fraud Rate</p>
                                 <p className="mt-2 text-2xl font-bold">{stats.rgcnFraudRate}%</p>
                               </div>
                             </div>
@@ -853,22 +895,22 @@ export default function AnalyzePage() {
                         {/* ERGCN Results Column */}
                         {analysisResult && (
                           <div className="space-y-4 pl-6">
-                            <h3 className="text-lg font-semibold text-purple-500 text-center">ERGCN Results</h3>
+                            <h3 className="text-lg font-semibold text-purple-500 text-center">ERGCN Predictions</h3>
                             <div className="space-y-3">
                               <div className="rounded-lg border border-border bg-card p-4">
                                 <p className="text-sm text-muted-foreground">Precision</p>
-                                <p className="mt-2 text-2xl font-bold text-purple-500">{stats.ergcnAccuracy}%</p>
+                                <p className="mt-2 text-2xl font-bold text-purple-500">{stats.ergcnPrecision}%</p>
                               </div>
                               <div className="rounded-lg border border-border bg-card p-4">
-                                <p className="text-sm text-muted-foreground">Legitimate</p>
+                                <p className="text-sm text-muted-foreground">Predicted Legitimate</p>
                                 <p className="mt-2 text-2xl font-bold text-green-500">{stats.ergcnLegitimate}</p>
                               </div>
                               <div className="rounded-lg border border-border bg-card p-4">
-                                <p className="text-sm text-muted-foreground">Fraud</p>
+                                <p className="text-sm text-muted-foreground">Predicted Fraud</p>
                                 <p className="mt-2 text-2xl font-bold text-red-500">{stats.ergcnFraud}</p>
                               </div>
                               <div className="rounded-lg border border-border bg-card p-4">
-                                <p className="text-sm text-muted-foreground">Fraud Rate</p>
+                                <p className="text-sm text-muted-foreground">Predicted Fraud Rate</p>
                                 <p className="mt-2 text-2xl font-bold">{stats.ergcnFraudRate}%</p>
                               </div>
                             </div>
@@ -972,15 +1014,15 @@ export default function AnalyzePage() {
                         <div className="grid gap-3">
                           <div className="flex justify-between items-center p-3 bg-card rounded-lg border">
                             <span className="text-sm text-muted-foreground">Recall</span>
-                            <span className="font-bold">{(analysisResult.metrics.ERGCN.recall * 100).toFixed(2)}%</span>
+                            <span className="font-bold">{analysisResult.metrics.ERGCN ? (analysisResult.metrics.ERGCN.recall * 100).toFixed(2) : 'N/A'}%</span>
                           </div>
                           <div className="flex justify-between items-center p-3 bg-card rounded-lg border">
                             <span className="text-sm text-muted-foreground">F1 Score</span>
-                            <span className="font-bold">{(analysisResult.metrics.ERGCN.f1 * 100).toFixed(2)}%</span>
+                            <span className="font-bold">{analysisResult.metrics.ERGCN ? (analysisResult.metrics.ERGCN.f1 * 100).toFixed(2) : 'N/A'}%</span>
                           </div>
                           <div className="flex justify-between items-center p-3 bg-card rounded-lg border">
                             <span className="text-sm text-muted-foreground">AUC</span>
-                            <span className="font-bold">{(analysisResult.metrics.ERGCN.auc * 100).toFixed(2)}%</span>
+                            <span className="font-bold">{analysisResult.metrics.ERGCN ? (analysisResult.metrics.ERGCN.auc * 100).toFixed(2) : 'N/A'}%</span>
                           </div>
                         </div>
                       </div>
@@ -993,28 +1035,28 @@ export default function AnalyzePage() {
                         <div className="text-center">
                           <span className="text-sm text-muted-foreground">Recall Difference</span>
                           <p className={`font-bold ${
-                            analysisResult.metrics.ERGCN.recall > analysisResult.metrics.RGCN.recall 
+                            analysisResult.metrics.ERGCN && analysisResult.metrics.ERGCN.recall > analysisResult.metrics.RGCN.recall 
                               ? 'text-green-500' : 'text-red-500'
                           }`}>
-                            {analysisResult.metrics.ERGCN.recall > analysisResult.metrics.RGCN.recall ? '+' : ''}{((analysisResult.metrics.ERGCN.recall - analysisResult.metrics.RGCN.recall) * 100).toFixed(2)}%
+                            {analysisResult.metrics.ERGCN ? (analysisResult.metrics.ERGCN.recall > analysisResult.metrics.RGCN.recall ? '+' : '') + ((analysisResult.metrics.ERGCN.recall - analysisResult.metrics.RGCN.recall) * 100).toFixed(2) + '%' : 'N/A'}
                           </p>
                         </div>
                         <div className="text-center">
                           <span className="text-sm text-muted-foreground">F1 Score Difference</span>
                           <p className={`font-bold ${
-                            analysisResult.metrics.ERGCN.f1 > analysisResult.metrics.RGCN.f1 
+                            analysisResult.metrics.ERGCN && analysisResult.metrics.ERGCN.f1 > analysisResult.metrics.RGCN.f1 
                               ? 'text-green-500' : 'text-red-500'
                           }`}>
-                            {analysisResult.metrics.ERGCN.f1 > analysisResult.metrics.RGCN.f1 ? '+' : ''}{((analysisResult.metrics.ERGCN.f1 - analysisResult.metrics.RGCN.f1) * 100).toFixed(2)}%
+                            {analysisResult.metrics.ERGCN ? (analysisResult.metrics.ERGCN.f1 > analysisResult.metrics.RGCN.f1 ? '+' : '') + ((analysisResult.metrics.ERGCN.f1 - analysisResult.metrics.RGCN.f1) * 100).toFixed(2) + '%' : 'N/A'}
                           </p>
                         </div>
                         <div className="text-center">
                           <span className="text-sm text-muted-foreground">AUC Difference</span>
                           <p className={`font-bold ${
-                            analysisResult.metrics.ERGCN.auc > analysisResult.metrics.RGCN.auc 
+                            analysisResult.metrics.ERGCN && analysisResult.metrics.ERGCN.auc > analysisResult.metrics.RGCN.auc 
                               ? 'text-green-500' : 'text-red-500'
                           }`}>
-                            {analysisResult.metrics.ERGCN.auc > analysisResult.metrics.RGCN.auc ? '+' : ''}{((analysisResult.metrics.ERGCN.auc - analysisResult.metrics.RGCN.auc) * 100).toFixed(2)}%
+                            {analysisResult.metrics.ERGCN ? (analysisResult.metrics.ERGCN.auc > analysisResult.metrics.RGCN.auc ? '+' : '') + ((analysisResult.metrics.ERGCN.auc - analysisResult.metrics.RGCN.auc) * 100).toFixed(2) + '%' : 'N/A'}
                           </p>
                         </div>
                       </div>

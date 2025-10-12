@@ -73,7 +73,7 @@ def analyze_transactions(csv_data: str):
     df = pd.read_csv(StringIO(csv_data))
     
     # EXTRA DATA PROCESSING
-    # Define required features
+    # Define required features 
     REQUIRED_FEATURES = [
         'isFraud', 'C14', 'C1', 'V317', 'V308', 'card6', 'V306', 'V126',
         'C11', 'C6', 'V282', 'TransactionAmt', 'V53', 'P_emaildomain',
@@ -81,7 +81,13 @@ def analyze_transactions(csv_data: str):
         'V90', 'V82', 'TransactionDT', 'C2', 'V87', 'V294', 'C12', 'V313', 'id_06'
     ]
 
-    df = df[['TransactionID'] + REQUIRED_FEATURES]
+    # Ensure TransactionID is included
+    if 'TransactionID' not in df.columns:
+        raise ValueError("CSV must contain TransactionID column")
+    
+    # Select required columns in the correct order
+    available_features = [f for f in REQUIRED_FEATURES if f in df.columns]
+    df = df[['TransactionID'] + available_features]
 
     # Identify column types
     categorical_cols = ['card6', 'P_emaildomain', 'card5', 'M6', 'card2', 'id_06']
@@ -136,7 +142,14 @@ def analyze_transactions(csv_data: str):
         dtype=torch.float
     )
     data['transaction'].x = transaction_features
-    data['transaction'].y = torch.tensor(df['isFraud'].values, dtype=torch.float)
+    
+    # Handle ground truth labels - use zeros if isFraud contains NaN
+    if 'isFraud' in df.columns and not df['isFraud'].isna().all():
+        labels = df['isFraud'].fillna(0).values  # Fill NaN with 0 for safety
+    else:
+        labels = np.zeros(len(df))  # No ground truth available
+    
+    data['transaction'].y = torch.tensor(labels, dtype=torch.float)
     data['transaction'].transaction_id = torch.tensor(df['TransactionID'].values, dtype=torch.long)
 
     print(f"Transaction features shape: {data['transaction'].x.shape}")

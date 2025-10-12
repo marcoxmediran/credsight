@@ -27,6 +27,7 @@ async function callModelInference(transactions: TransactionData[]): Promise<Anal
   const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:8000'
   
   try {
+
     const response = await fetch(`${BACKEND_URL}/analyze`, {
       method: 'POST',
       headers: {
@@ -39,35 +40,21 @@ async function callModelInference(transactions: TransactionData[]): Promise<Anal
       throw new Error(`Backend error: ${response.status}`)
     }
     
-    return await response.json()
-  } catch (error) {
-    console.error('Backend connection failed, using mock data:', error)
+    const result = await response.json()
     
-    // Fallback to mock data if backend is unavailable
-    await new Promise(resolve => setTimeout(resolve, 1000))
-    
-    const processedTransactions = transactions.map(t => ({
-      ...t,
-      RGCN: Math.random() > 0.7 ? 1 : 0,
-      ERGCN: Math.random() > 0.6 ? 1 : 0
-    }))
-
-    return {
-      transactions: processedTransactions,
-      metrics: {
-        RGCN: {
-          recall: 0.34,
-          f1: 0.46,
-          auc: 0.89
-        },
-        ERGCN: {
-          recall: 0.46,
-          f1: 0.61,
-          auc: 0.93
-        },
-        p_value: 0.021
-      }
+    // Map backend field names to frontend expectations
+    if (result.transactions) {
+      result.transactions = result.transactions.map((t: any) => ({
+        ...t,
+        RGCN: t.RGCN_Prediction,
+        ERGCN: t.ERGCN_Prediction
+      }))
     }
+
+    return result
+  } catch (error) {
+    console.error('Backend connection failed:', error)
+    throw new Error('Backend model unavailable. Please ensure the backend server is running.')
   }
 }
 
