@@ -106,7 +106,7 @@ export default function Home() {
           <AnimatedCard>
             <h2 className="mb-4 text-center text-3xl font-bold md:text-4xl">Key Features</h2>
             <p className="mb-16 text-center text-muted-foreground">
-              Powerful tools to detect and prevent fraud in your transactions
+              Advanced comparative analysis tools for graph-based fraud detection research
             </p>
           </AnimatedCard>
 
@@ -114,32 +114,32 @@ export default function Home() {
             <AnimatedCard delay={0}>
               <FeatureCard
                 icon={<Upload className="h-8 w-8" />}
-                title="CSV Data Processing"
-                description="Upload your transaction data in CSV format with TransactionID column for instant analysis and fraud detection."
+                title="Dual Protocol CSV Processing"
+                description="Upload transaction data with or without ground truth labels. Supports large datasets up to 800MB with automatic sampling and chunked processing."
                 delay={0}
               />
             </AnimatedCard>
             <AnimatedCard delay={150}>
               <FeatureCard
                 icon={<Brain className="h-8 w-8" />}
-                title="ERGCN Model"
-                description="Advanced machine learning model specifically trained for fraud detection with high accuracy and low false positive rates."
+                title="R-GCN vs ERGCN Comparison"
+                description="Side-by-side comparison of traditional R-GCN and Enhanced R-GCN models with statistical significance testing and performance metrics."
                 delay={0}
               />
             </AnimatedCard>
             <AnimatedCard delay={300}>
               <FeatureCard
                 icon={<BarChart3 className="h-8 w-8" />}
-                title="Quick Analysis"
-                description="Get instant fraud predictions and comprehensive statistics overview with filtering options for detailed analysis."
+                title="Interactive Results Analysis"
+                description="Explore predictions with advanced filtering, search functionality, and confidence details with threshold-based fraud classification."
                 delay={0}
               />
             </AnimatedCard>
             <AnimatedCard delay={450}>
               <FeatureCard
                 icon={<Shield className="h-8 w-8" />}
-                title="Statistical Insights"
-                description="Detailed statistics including fraud rates, case counts, and comprehensive data visualization for informed decisions."
+                title="Comprehensive Model Metrics"
+                description="Detailed performance evaluation including Recall, F1-Score, AUC metrics, and statistical comparison with p-value analysis."
                 delay={0}
               />
             </AnimatedCard>
@@ -198,17 +198,27 @@ export default function Home() {
         <div className="mx-auto max-w-4xl">
           <AnimatedCard>
             <h2 className="mb-8 text-center text-3xl font-bold md:text-4xl">About This Project</h2>
-            <div className="space-y-4 text-pretty leading-relaxed text-muted-foreground">
-              <p className="text-center">
-              This project shows how machine learning can be used in financial technology through a working fraud detection system powered by the Enhanced Relational Graph Convolutional Network (ERGCN). The model looks at how users, merchants, and transactions are connected over time to spot unusual patterns that may indicate fraud. By studying both relationships and timing, it improves accuracy and helps reduce false alarms, giving financial institutions a smarter way to detect fraud.
-              </p>
-              <p className="text-center">
-              The system currently works in <strong>batch mode</strong>, analyzing transaction data in set intervals. It includes a simple web interface that shows key results such as F1-score, recall, AUC-ROC, confusion matrix, and classification report so users can easily understand how the model performs. Built to be flexible and scalable, this project turns advanced graph-based research into a practical tool for real-world financial fraud detection.
-              </p>
-              <p className="text-center">
-              This project was developed by a group of Computer Science students, who collaboratively designed and built both the system architecture and the machine learning model, from data processing to deployment, to demonstrate a complete, end-to-end software solution.
-              </p>
-            </div>
+            <Card className="border-border bg-card">
+              <CardContent className="pt-6">
+                <div className="space-y-4 text-pretty leading-relaxed text-muted-foreground">
+                  <p className="text-center">
+                  <strong>CredSight</strong>, short for Credit Insight, embodies the project's goal of providing clearer visibility into fraudulent activities within financial transactions. The name reflects the system's capability to "see through" complex transactional relationships and uncover hidden fraud patterns using graph-based learning techniques.
+                  </p>
+                  <p className="text-center">
+                  This undergraduate thesis project presents a comparative analysis between two graph-based machine learning models for credit card fraud detection: the Relational Graph Convolutional Network (R-GCN) and a modified version termed the Enhanced Relational Graph Convolutional Network (ERGCN). Using the IEEE-CIS Vesta Financial Fraud Detection dataset, the system evaluates how these models perform in identifying fraudulent transactions by analyzing inter-entity relationships and behavioral patterns within transaction networks.
+                  </p>
+                  <p className="text-center">
+                  <strong>The novelty of this research lies in its pioneering application of ERGCN to the IEEE-CIS dataset</strong>, examining how enhanced relational modeling and temporal integration can influence fraud detection performance compared to conventional graph neural network approaches. This investigation provides valuable insights into the role of graph-based reasoning in large-scale financial transaction analysis.
+                  </p>
+                  <p className="text-center">
+                  The CredSight web application offers an interactive platform for uploading transaction data and comparing model performance through key metrics such as Recall, F1-Score, and AUC. Users can explore individual transaction predictions, review confidence levels through threshold-based classification, and analyze statistical differences between the two models. The system accommodates both datasets with ground truth labels (for validation) and unlabeled datasets (for prediction).
+                  </p>
+                  <p className="text-center">
+                  Developed by five Computer Science students as an undergraduate thesis project, CredSight demonstrates the practical application of graph neural networks in financial fraud detection while offering a robust comparative framework for evaluating model performance in real-world transactional contexts.
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
           </AnimatedCard>
         </div>
       </section>

@@ -147,7 +147,26 @@ export default function AnalyzePage() {
           return
         }
 
-        const hasGroundTruthData = isFraudIndex !== -1
+        // Check if ground truth column exists and validate values
+        let hasGroundTruthData = false
+        if (isFraudIndex !== -1) {
+          // Sample a few rows to check if values are 0 or 1
+          const sampleRows = lines.slice(1, Math.min(11, lines.length))
+          const validGroundTruth = sampleRows.every(row => {
+            if (!row.trim()) return true
+            const values = row.split(',').map(v => v.trim())
+            const value = values[isFraudIndex]
+            return value === '0' || value === '1' || value.toLowerCase() === 'true' || value.toLowerCase() === 'false'
+          })
+          
+          if (validGroundTruth) {
+            hasGroundTruthData = true
+          } else {
+            alert("Ground truth column (TrueLabel/IsFraud) must contain only 0 or 1 values. Treating as No Ground Truth Protocol.")
+            hasGroundTruthData = false
+          }
+        }
+        
         setHasGroundTruth(hasGroundTruthData)
 
         setProcessingProgress(50)
