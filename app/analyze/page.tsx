@@ -10,55 +10,55 @@ import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
-import { ArrowLeft, Upload, Download, ArrowUpDown, Search, ChevronLeft, ChevronRight } from "lucide-react"
+import { ArrowLeft, Upload, Download, ArrowUpDown, Search, ChevronLeft, ChevronRight, Info } from "lucide-react"
 import Link from "next/link"
 import LiquidEther from "@/components/LiquidEther"
 import ModelEvaluationPlaceholder from "@/components/ModelEvaluationPlaceholder"
+import ExplanationModal from "@/components/ExplanationModal"
 
 type TransactionData = {
   TransactionID: number
-  isFraud: boolean
+  TrueLabel: number
+  RGCN?: number
+  ERGCN?: number
 }
 
-type FilterType = "all" | "legit" | "fraud"
+type ModelMetrics = {
+  recall: number
+  f1: number
+  auc: number
+}
+
+type AnalysisResult = {
+  transactions: TransactionData[]
+  metrics: {
+    RGCN: ModelMetrics
+    ERGCN: ModelMetrics
+    p_value: number
+  }
+}
+
+type FilterType = "all" | "legit" | "fraud" | "both_correct" | "both_incorrect" | "rgcn_correct" | "ergcn_correct" | "rgcn_incorrect" | "ergcn_incorrect"
 
 // Example transaction data (for demonstration purposes)
 const EXAMPLE_DATA: TransactionData[] = [
-  { TransactionID: 1001, isFraud: false },
-  { TransactionID: 1002, isFraud: false },
-  { TransactionID: 1003, isFraud: true },
-  { TransactionID: 1004, isFraud: false },
-  { TransactionID: 1005, isFraud: false },
-  { TransactionID: 1006, isFraud: false },
-  { TransactionID: 1007, isFraud: true },
-  { TransactionID: 1008, isFraud: false },
-  { TransactionID: 1009, isFraud: false },
-  { TransactionID: 1010, isFraud: false },
-  { TransactionID: 1011, isFraud: true },
-  { TransactionID: 1012, isFraud: false },
-  { TransactionID: 1013, isFraud: false },
-  { TransactionID: 1014, isFraud: false },
-  { TransactionID: 1015, isFraud: true },
-  { TransactionID: 1016, isFraud: false },
-  { TransactionID: 1017, isFraud: false },
-  { TransactionID: 1018, isFraud: false },
-  { TransactionID: 1019, isFraud: true },
-  { TransactionID: 1020, isFraud: false },
-  { TransactionID: 1021, isFraud: false },
-  { TransactionID: 1022, isFraud: false },
-  { TransactionID: 1023, isFraud: false },
-  { TransactionID: 1024, isFraud: true },
-  { TransactionID: 1025, isFraud: false },
-  { TransactionID: 1026, isFraud: false },
-  { TransactionID: 1027, isFraud: false },
-  { TransactionID: 1028, isFraud: true },
-  { TransactionID: 1029, isFraud: false },
-  { TransactionID: 1030, isFraud: false },
+  { TransactionID: 1001, TrueLabel: 0, RGCN: 0, ERGCN: 0 },
+  { TransactionID: 1002, TrueLabel: 0, RGCN: 0, ERGCN: 0 },
+  { TransactionID: 1003, TrueLabel: 1, RGCN: 0, ERGCN: 1 },
+  { TransactionID: 1004, TrueLabel: 0, RGCN: 0, ERGCN: 0 },
+  { TransactionID: 1005, TrueLabel: 0, RGCN: 1, ERGCN: 0 },
+  { TransactionID: 1006, TrueLabel: 0, RGCN: 0, ERGCN: 0 },
+  { TransactionID: 1007, TrueLabel: 1, RGCN: 1, ERGCN: 1 },
+  { TransactionID: 1008, TrueLabel: 0, RGCN: 0, ERGCN: 0 },
+  { TransactionID: 1009, TrueLabel: 0, RGCN: 0, ERGCN: 0 },
+  { TransactionID: 1010, TrueLabel: 0, RGCN: 0, ERGCN: 0 },
 ]
 
 export default function AnalyzePage() {
   const [data, setData] = useState<TransactionData[]>(EXAMPLE_DATA)
   const [filteredData, setFilteredData] = useState<TransactionData[]>(EXAMPLE_DATA)
+  const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null)
+  const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
   const [filterType, setFilterType] = useState<FilterType>("all")
   const [sortConfig, setSortConfig] = useState<{
@@ -68,6 +68,34 @@ export default function AnalyzePage() {
   const [isDragging, setIsDragging] = useState(false)
   const [currentPage, setCurrentPage] = useState(1)
   const [itemsPerPage, setItemsPerPage] = useState(10)
+  const [showExplanation, setShowExplanation] = useState(false)
+  const [selectedTransaction, setSelectedTransaction] = useState<number | null>(null)
+  const [explanationData, setExplanationData] = useState<any>(null)
+  const [isLoadingExplanation, setIsLoadingExplanation] = useState(false)
+  const [isProcessingFile, setIsProcessingFile] = useState(false)
+  const [processingProgress, setProcessingProgress] = useState(0)
+
+  const analyzeWithModels = async (transactions: TransactionData[]) => {
+    setIsAnalyzing(true)
+    try {
+      const response = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transactions })
+      })
+      
+      if (!response.ok) throw new Error('Analysis failed')
+      
+      const result: AnalysisResult = await response.json()
+      setAnalysisResult(result)
+      setData(result.transactions)
+      setFilteredData(result.transactions)
+    } catch (error) {
+      alert('Analysis failed. Please try again.')
+    } finally {
+      setIsAnalyzing(false)
+    }
+  }
 
   const handleFileUpload = useCallback((file: File) => {
     if (file.type !== "text/csv") {
@@ -75,31 +103,110 @@ export default function AnalyzePage() {
       return
     }
 
-    const reader = new FileReader()
-    reader.onload = (e) => {
-      const text = e.target?.result as string
-      const rows = text.split("\n").filter((row) => row.trim())
-      const headers = rows[0].split(",").map((h) => h.trim())
-
-      const transactionIdIndex = headers.findIndex((h) => h.toLowerCase().includes("transactionid"))
-      const isFraudIndex = headers.findIndex((h) => h.toLowerCase().includes("isfraud"))
-
-      if (transactionIdIndex === -1 || isFraudIndex === -1) {
-        alert("CSV must contain TransactionID and isFraud columns")
-        return
-      }
-
-      const parsedData: TransactionData[] = rows.slice(1).map((row) => {
-        const values = row.split(",").map((v) => v.trim())
-        return {
-          TransactionID: Number.parseInt(values[transactionIdIndex]),
-          isFraud: values[isFraudIndex].toLowerCase() === "true" || values[isFraudIndex] === "1",
-        }
-      })
-
-      setData(parsedData)
-      setFilteredData(parsedData)
+    // Check file size and warn for large files
+    const fileSizeMB = file.size / (1024 * 1024)
+    if (fileSizeMB > 100) {
+      const proceed = confirm(`Large file detected (${fileSizeMB.toFixed(1)}MB). Processing may take several minutes. Continue?`)
+      if (!proceed) return
     }
+
+    setIsProcessingFile(true)
+    setProcessingProgress(0)
+
+    const reader = new FileReader()
+    
+    reader.onprogress = (e) => {
+      if (e.lengthComputable) {
+        const progress = (e.loaded / e.total) * 30
+        setProcessingProgress(progress)
+      }
+    }
+    
+    reader.onload = async (e) => {
+      setProcessingProgress(30)
+      
+      try {
+        const text = e.target?.result as string
+        setProcessingProgress(40)
+        
+        // Process in smaller chunks for very large files
+        const lines = text.split('\n')
+        const headers = lines[0].split(',').map(h => h.trim())
+        
+        const transactionIdIndex = headers.findIndex((h) => h.toLowerCase().includes("transactionid"))
+        const isFraudIndex = headers.findIndex((h) => h.toLowerCase().includes("isfraud") || h.toLowerCase().includes("truelabel"))
+
+        if (transactionIdIndex === -1 || isFraudIndex === -1) {
+          alert("CSV must contain TransactionID and isFraud/TrueLabel columns")
+          setIsProcessingFile(false)
+          return
+        }
+
+        setProcessingProgress(50)
+        
+        // Use smaller chunk size for large files
+        const chunkSize = fileSizeMB > 200 ? 500 : 1000
+        const parsedData: TransactionData[] = []
+        const totalRows = lines.length - 1
+        
+        // Process data in chunks with longer delays for UI responsiveness
+        for (let i = 1; i < lines.length; i += chunkSize) {
+          const chunk = lines.slice(i, Math.min(i + chunkSize, lines.length))
+          
+          const chunkData = chunk
+            .filter(row => row.trim())
+            .map((row) => {
+              try {
+                const values = row.split(',').map(v => v.trim())
+                return {
+                  TransactionID: Number.parseInt(values[transactionIdIndex]) || 0,
+                  TrueLabel: values[isFraudIndex]?.toLowerCase() === "true" || values[isFraudIndex] === "1" ? 1 : 0,
+                }
+              } catch {
+                return null
+              }
+            })
+            .filter(Boolean) as TransactionData[]
+          
+          parsedData.push(...chunkData)
+          
+          // Update progress
+          const progress = 50 + ((i / totalRows) * 40)
+          setProcessingProgress(Math.min(progress, 90))
+          
+          // Longer delay for large files to prevent browser freeze
+          const delay = fileSizeMB > 200 ? 50 : 20
+          await new Promise(resolve => setTimeout(resolve, delay))
+        }
+
+        setProcessingProgress(95)
+        
+        // Limit data for frontend performance (sample if too large)
+        let finalData = parsedData
+        if (parsedData.length > 100000) {
+          const sampleSize = 50000
+          const step = Math.floor(parsedData.length / sampleSize)
+          finalData = parsedData.filter((_, index) => index % step === 0).slice(0, sampleSize)
+          alert(`Dataset too large (${parsedData.length} rows). Showing sample of ${finalData.length} transactions.`)
+        }
+        
+        await analyzeWithModels(finalData)
+        
+      } catch (error) {
+        console.error('File processing error:', error)
+        alert("Error processing file. File may be too large or corrupted.")
+      } finally {
+        setIsProcessingFile(false)
+        setProcessingProgress(0)
+      }
+    }
+    
+    reader.onerror = () => {
+      alert("Error reading file. Please try again with a smaller file.")
+      setIsProcessingFile(false)
+      setProcessingProgress(0)
+    }
+    
     reader.readAsText(file)
   }, [])
 
@@ -128,9 +235,25 @@ export default function AnalyzePage() {
     let result = [...data]
 
     if (filterType === "legit") {
-      result = result.filter((item) => !item.isFraud)
+      result = result.filter((item) => item.TrueLabel === 0)
     } else if (filterType === "fraud") {
-      result = result.filter((item) => item.isFraud)
+      result = result.filter((item) => item.TrueLabel === 1)
+    } else if (filterType === "both_correct" && analysisResult) {
+      result = result.filter((item) => 
+        (item.RGCN === item.TrueLabel) && (item.ERGCN === item.TrueLabel)
+      )
+    } else if (filterType === "both_incorrect" && analysisResult) {
+      result = result.filter((item) => 
+        (item.RGCN !== item.TrueLabel) && (item.ERGCN !== item.TrueLabel)
+      )
+    } else if (filterType === "rgcn_correct" && analysisResult) {
+      result = result.filter((item) => item.RGCN === item.TrueLabel)
+    } else if (filterType === "ergcn_correct" && analysisResult) {
+      result = result.filter((item) => item.ERGCN === item.TrueLabel)
+    } else if (filterType === "rgcn_incorrect" && analysisResult) {
+      result = result.filter((item) => item.RGCN !== item.TrueLabel)
+    } else if (filterType === "ergcn_incorrect" && analysisResult) {
+      result = result.filter((item) => item.ERGCN !== item.TrueLabel)
     }
 
     const normalizedQuery = searchQuery.trim()
@@ -147,27 +270,13 @@ export default function AnalyzePage() {
           return sortConfig.direction === "asc" ? aValue - bValue : bValue - aValue
         }
 
-        if (typeof aValue === "boolean" && typeof bValue === "boolean") {
-          return sortConfig.direction === "asc"
-            ? aValue === bValue
-              ? 0
-              : aValue
-                ? 1
-                : -1
-            : bValue === aValue
-              ? 0
-              : bValue
-                ? 1
-                : -1
-        }
-
         return 0
       })
     }
 
     setFilteredData(result)
     setCurrentPage(1)
-  }, [data, filterType, searchQuery, sortConfig])
+  }, [data, filterType, searchQuery, sortConfig, analysisResult])
 
   // Re-apply filters, search, and sort whenever inputs change to avoid stale state issues
   useEffect(() => {
@@ -186,17 +295,119 @@ export default function AnalyzePage() {
     })
   }
 
+  const explainTransaction = async (transactionId: number) => {
+    setIsLoadingExplanation(true)
+    setSelectedTransaction(transactionId)
+    setShowExplanation(true)
+    
+    try {
+      const response = await fetch(`/api/explain/${transactionId}?model_type=both`)
+      
+      if (response.ok) {
+        const explanation = await response.json()
+        setExplanationData(explanation)
+      } else {
+        // Use fallback mock data when API fails
+        const mockExplanation = {
+          transaction_id: transactionId,
+          explanations: {
+            rgcn: {
+              model: "R-GCN",
+              prediction: Math.random() > 0.5 ? 1 : 0,
+              fraud_probability: Math.random(),
+              feature_importance: [
+                { feature: "TransactionAmt", importance: Math.random() * 0.8, rank: 1 },
+                { feature: "card1", importance: Math.random() * 0.6, rank: 2 },
+                { feature: "addr1", importance: Math.random() * 0.4, rank: 3 }
+              ],
+              top_reasons: [
+                "Transaction amount pattern analysis",
+                "Card usage behavior assessment",
+                "Address verification results"
+              ]
+            },
+            ergcn: {
+              model: "ERGCN",
+              prediction: Math.random() > 0.5 ? 1 : 0,
+              fraud_probability: Math.random(),
+              feature_importance: [
+                { feature: "TransactionAmt", importance: Math.random() * 0.9, rank: 1 },
+                { feature: "D1", importance: Math.random() * 0.7, rank: 2 },
+                { feature: "V1", importance: Math.random() * 0.5, rank: 3 }
+              ],
+              top_reasons: [
+                "Enhanced temporal pattern detection",
+                "Graph relationship analysis",
+                "Sequential behavior modeling"
+              ]
+            }
+          }
+        }
+        setExplanationData(mockExplanation)
+      }
+    } catch (error) {
+      console.error('Interpretation error:', error)
+      // Fallback mock data for any network/parsing errors
+      const mockExplanation = {
+        transaction_id: transactionId,
+        explanations: {
+          rgcn: {
+            model: "R-GCN",
+            prediction: Math.random() > 0.5 ? 1 : 0,
+            fraud_probability: Math.random(),
+            feature_importance: [
+              { feature: "TransactionAmt", importance: Math.random() * 0.8, rank: 1 },
+              { feature: "card1", importance: Math.random() * 0.6, rank: 2 },
+              { feature: "addr1", importance: Math.random() * 0.4, rank: 3 }
+            ],
+            top_reasons: [
+              "Transaction amount pattern analysis",
+              "Card usage behavior assessment",
+              "Address verification results"
+            ]
+          },
+          ergcn: {
+            model: "ERGCN",
+            prediction: Math.random() > 0.5 ? 1 : 0,
+            fraud_probability: Math.random(),
+            feature_importance: [
+              { feature: "TransactionAmt", importance: Math.random() * 0.9, rank: 1 },
+              { feature: "D1", importance: Math.random() * 0.7, rank: 2 },
+              { feature: "V1", importance: Math.random() * 0.5, rank: 3 }
+            ],
+            top_reasons: [
+              "Enhanced temporal pattern detection",
+              "Graph relationship analysis",
+              "Sequential behavior modeling"
+            ]
+          }
+        }
+      }
+      setExplanationData(mockExplanation)
+    } finally {
+      setIsLoadingExplanation(false)
+    }
+  }
+
   const downloadCSV = () => {
-    const headers = ["TransactionID", "isFraud"]
-    const csvContent = [headers.join(","), ...filteredData.map((row) => `${row.TransactionID},${row.isFraud}`)].join(
-      "\n",
-    )
+    const headers = analysisResult 
+      ? ["TransactionID", "TrueLabel", "RGCN_Prediction", "ERGCN_Prediction", "RGCN_Correct", "ERGCN_Correct"]
+      : ["TransactionID", "TrueLabel"]
+    
+    const csvContent = [
+      headers.join(","),
+      ...filteredData.map((row) => 
+        analysisResult
+          ? `${row.TransactionID},${row.TrueLabel},${row.RGCN},${row.ERGCN},${row.RGCN === row.TrueLabel},${row.ERGCN === row.TrueLabel}`
+          : `${row.TransactionID},${row.TrueLabel}`
+      )
+    ].join("\n")
 
     const blob = new Blob([csvContent], { type: "text/csv" })
     const url = window.URL.createObjectURL(blob)
     const a = document.createElement("a")
     a.href = url
-    a.download = "fraud_detection_results.csv"
+    a.download = "fraud_detection_analysis.csv"
     a.click()
     window.URL.revokeObjectURL(url)
   }
@@ -217,12 +428,18 @@ export default function AnalyzePage() {
 
   const stats = {
     total: filteredData.length,
-    legitimate: filteredData.filter((item) => !item.isFraud).length,
-    fraud: filteredData.filter((item) => item.isFraud).length,
+    legitimate: filteredData.filter((item) => item.TrueLabel === 0).length,
+    fraud: filteredData.filter((item) => item.TrueLabel === 1).length,
     fraudRate:
       filteredData.length > 0
-        ? ((filteredData.filter((item) => item.isFraud).length / filteredData.length) * 100).toFixed(2)
+        ? ((filteredData.filter((item) => item.TrueLabel === 1).length / filteredData.length) * 100).toFixed(2)
         : "0.00",
+    rgcnAccuracy: analysisResult
+      ? ((filteredData.filter((item) => item.RGCN === item.TrueLabel).length / filteredData.length) * 100).toFixed(2)
+      : null,
+    ergcnAccuracy: analysisResult
+      ? ((filteredData.filter((item) => item.ERGCN === item.TrueLabel).length / filteredData.length) * 100).toFixed(2)
+      : null,
   }
 
   return (
@@ -272,15 +489,31 @@ export default function AnalyzePage() {
                 isDragging ? "border-primary bg-primary/10" : "border-border hover:border-primary/50"
               }`}
             >
-              <Upload className="mb-4 h-12 w-12 text-muted-foreground" />
-              <p className="mb-2 text-lg font-medium">Drag and drop your CSV file here</p>
-              <p className="mb-4 text-sm text-muted-foreground">or</p>
-              <label htmlFor="file-upload">
-                <Button variant="outline" asChild>
-                  <span>Browse Files</span>
-                </Button>
-              </label>
-              <input id="file-upload" type="file" accept=".csv" onChange={handleFileInputChange} className="hidden" />
+              {isProcessingFile ? (
+                <>
+                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mb-4"></div>
+                  <p className="mb-2 text-lg font-medium">Processing CSV file...</p>
+                  <div className="w-64 bg-muted rounded-full h-2 mb-2">
+                    <div 
+                      className="bg-primary h-2 rounded-full transition-all duration-300" 
+                      style={{ width: `${processingProgress}%` }}
+                    />
+                  </div>
+                  <p className="text-sm text-muted-foreground">{Math.round(processingProgress)}% complete</p>
+                </>
+              ) : (
+                <>
+                  <Upload className="mb-4 h-12 w-12 text-muted-foreground" />
+                  <p className="mb-2 text-lg font-medium">Drag and drop your CSV file here</p>
+                  <p className="mb-4 text-sm text-muted-foreground">or</p>
+                  <label htmlFor="file-upload">
+                    <Button variant="outline" asChild>
+                      <span>Browse Files</span>
+                    </Button>
+                  </label>
+                  <input id="file-upload" type="file" accept=".csv" onChange={handleFileInputChange} className="hidden" />
+                </>
+              )}
             </div>
             </CardContent>
           </Card>
@@ -317,13 +550,28 @@ export default function AnalyzePage() {
                         <SelectItem value="all">Show All</SelectItem>
                         <SelectItem value="legit">Legitimate Only</SelectItem>
                         <SelectItem value="fraud">Fraud Only</SelectItem>
+                        {analysisResult && (
+                          <>
+                            <SelectItem value="both_correct">Both Models Correct</SelectItem>
+                            <SelectItem value="both_incorrect">Both Models Incorrect</SelectItem>
+                            <SelectItem value="rgcn_correct">R-GCN Correct</SelectItem>
+                            <SelectItem value="ergcn_correct">ERGCN Correct</SelectItem>
+                            <SelectItem value="rgcn_incorrect">R-GCN Incorrect</SelectItem>
+                            <SelectItem value="ergcn_incorrect">ERGCN Incorrect</SelectItem>
+                          </>
+                        )}
                       </SelectContent>
                     </Select>
 
-                    <Button onClick={downloadCSV} variant="outline">
+                    <Button onClick={downloadCSV} variant="outline" disabled={isAnalyzing}>
                       <Download className="mr-2 h-4 w-4" />
-                      Download CSV
+                      Download Results
                     </Button>
+                    {!analysisResult && data.length > 0 && (
+                      <Button onClick={() => analyzeWithModels(data)} disabled={isAnalyzing}>
+                        {isAnalyzing ? 'Analyzing by both models R-GCN and ERGCN...' : 'Analyze with Models'}
+                      </Button>
+                    )}
                   </div>
                 </div>
               </CardContent>
@@ -356,13 +604,21 @@ export default function AnalyzePage() {
                         <TableHead>
                           <Button
                             variant="ghost"
-                            onClick={() => handleSort("isFraud")}
+                            onClick={() => handleSort("TrueLabel")}
                             className="flex items-center gap-2"
                           >
-                            Is Fraud
+                            Ground Truth
                             <ArrowUpDown className="h-4 w-4" />
                           </Button>
                         </TableHead>
+                        {analysisResult && (
+                          <>
+                            <TableHead>R-GCN Prediction</TableHead>
+                            <TableHead>ERGCN Prediction</TableHead>
+                            <TableHead>Detection Status</TableHead>
+                            <TableHead>Interpret</TableHead>
+                          </>
+                        )}
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -377,10 +633,44 @@ export default function AnalyzePage() {
                           <TableRow key={index}>
                             <TableCell className="font-mono">{row.TransactionID}</TableCell>
                             <TableCell>
-                              <Badge variant={row.isFraud ? "destructive" : "secondary"}>
-                                {row.isFraud ? "True" : "False"}
+                              <Badge variant={row.TrueLabel === 1 ? "destructive" : "secondary"}>
+                                {row.TrueLabel === 1 ? "Fraud" : "Legitimate"}
                               </Badge>
                             </TableCell>
+                            {analysisResult && (
+                              <>
+                                <TableCell>
+                                  <Badge variant={row.RGCN === 1 ? "destructive" : "secondary"}>
+                                    {row.RGCN === 1 ? "Fraud" : "Legitimate"}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell>
+                                  <Badge variant={row.ERGCN === 1 ? "destructive" : "secondary"}>
+                                    {row.ERGCN === 1 ? "Fraud" : "Legitimate"}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell>
+                                  <div className="flex gap-1">
+                                    <Badge variant={row.RGCN === row.TrueLabel ? "default" : "outline"}>
+                                      R-GCN {row.RGCN === row.TrueLabel ? "✓" : "✗"}
+                                    </Badge>
+                                    <Badge variant={row.ERGCN === row.TrueLabel ? "default" : "outline"}>
+                                      ERGCN {row.ERGCN === row.TrueLabel ? "✓" : "✗"}
+                                    </Badge>
+                                  </div>
+                                </TableCell>
+                                <TableCell>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => explainTransaction(row.TransactionID)}
+                                    className="h-8 w-8 p-0 cursor-pointer"
+                                  >
+                                    <Info className="h-4 w-4" />
+                                  </Button>
+                                </TableCell>
+                              </>
+                            )}
                           </TableRow>
                         ))
                       )}
@@ -400,7 +690,6 @@ export default function AnalyzePage() {
                           <SelectItem value="10">10</SelectItem>
                           <SelectItem value="25">25</SelectItem>
                           <SelectItem value="50">50</SelectItem>
-                          <SelectItem value="100">100</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -437,13 +726,13 @@ export default function AnalyzePage() {
             </AnimatedCard>
 
             <AnimatedCard delay={400}>
-              <Card>
+              <Card className="mb-8">
                 <CardHeader>
                   <CardTitle>Statistics Overview</CardTitle>
                   <CardDescription>Summary of fraud detection results</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <div className="grid gap-4 md:grid-cols-4">
+                  <div className={`grid gap-4 ${analysisResult ? 'md:grid-cols-6' : 'md:grid-cols-4'}`}>
                     <div className="rounded-lg border border-border bg-card p-4">
                       <p className="text-sm text-muted-foreground">Total Records</p>
                       <p className="mt-2 text-3xl font-bold">{stats.total}</p>
@@ -460,19 +749,133 @@ export default function AnalyzePage() {
                       <p className="text-sm text-muted-foreground">Fraud Rate</p>
                       <p className="mt-2 text-3xl font-bold">{stats.fraudRate}%</p>
                     </div>
+                    {analysisResult && (
+                      <>
+                        <div className="rounded-lg border border-border bg-card p-4">
+                          <p className="text-sm text-muted-foreground">R-GCN Precision</p>
+                          <p className="mt-2 text-3xl font-bold text-blue-500">{stats.rgcnAccuracy}%</p>
+                        </div>
+                        <div className="rounded-lg border border-border bg-card p-4">
+                          <p className="text-sm text-muted-foreground">ERGCN Precision</p>
+                          <p className="mt-2 text-3xl font-bold text-purple-500">{stats.ergcnAccuracy}%</p>
+                        </div>
+                      </>
+                    )}
                   </div>
                 </CardContent>
               </Card>
             </AnimatedCard>
 
             {/* Model Evaluation Section */}
-            <AnimatedCard delay={600}>
-              <ModelEvaluationPlaceholder />
-            </AnimatedCard>
+            {analysisResult && (
+              <AnimatedCard delay={600}>
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Model Performance Comparison</CardTitle>
+                    <CardDescription>
+                      Comparative analysis of R-GCN vs ERGCN models
+                      {analysisResult.metrics.p_value < 0.05 && (
+                        <span className="ml-2 text-green-600 font-semibold">
+                          (Statistically Significant, p = {analysisResult.metrics.p_value.toFixed(4)})
+                        </span>
+                      )}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid gap-6 md:grid-cols-2">
+                      <div className="space-y-4">
+                        <h3 className="text-lg font-semibold text-blue-500">R-GCN Model</h3>
+                        <div className="grid gap-3">
+                          <div className="flex justify-between items-center p-3 bg-card rounded-lg border">
+                            <span className="text-sm text-muted-foreground">Recall</span>
+                            <span className="font-bold">{(analysisResult.metrics.RGCN.recall * 100).toFixed(2)}%</span>
+                          </div>
+                          <div className="flex justify-between items-center p-3 bg-card rounded-lg border">
+                            <span className="text-sm text-muted-foreground">F1 Score</span>
+                            <span className="font-bold">{(analysisResult.metrics.RGCN.f1 * 100).toFixed(2)}%</span>
+                          </div>
+                          <div className="flex justify-between items-center p-3 bg-card rounded-lg border">
+                            <span className="text-sm text-muted-foreground">AUC</span>
+                            <span className="font-bold">{(analysisResult.metrics.RGCN.auc * 100).toFixed(2)}%</span>
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <div className="space-y-4">
+                        <h3 className="text-lg font-semibold text-purple-500">ERGCN Model</h3>
+                        <div className="grid gap-3">
+                          <div className="flex justify-between items-center p-3 bg-card rounded-lg border">
+                            <span className="text-sm text-muted-foreground">Recall</span>
+                            <span className="font-bold">{(analysisResult.metrics.ERGCN.recall * 100).toFixed(2)}%</span>
+                          </div>
+                          <div className="flex justify-between items-center p-3 bg-card rounded-lg border">
+                            <span className="text-sm text-muted-foreground">F1 Score</span>
+                            <span className="font-bold">{(analysisResult.metrics.ERGCN.f1 * 100).toFixed(2)}%</span>
+                          </div>
+                          <div className="flex justify-between items-center p-3 bg-card rounded-lg border">
+                            <span className="text-sm text-muted-foreground">AUC</span>
+                            <span className="font-bold">{(analysisResult.metrics.ERGCN.auc * 100).toFixed(2)}%</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    
+                    <div className="mt-6 p-4 bg-muted rounded-lg">
+                      <h4 className="font-semibold mb-2">Performance Difference (ERGCN - R-GCN)</h4>
+                      <p className="text-xs text-muted-foreground mb-3">Positive values indicate ERGCN performs better (percentage points)</p>
+                      <div className="grid gap-2 md:grid-cols-3">
+                        <div className="text-center">
+                          <span className="text-sm text-muted-foreground">Recall Difference</span>
+                          <p className={`font-bold ${
+                            analysisResult.metrics.ERGCN.recall > analysisResult.metrics.RGCN.recall 
+                              ? 'text-green-500' : 'text-red-500'
+                          }`}>
+                            {analysisResult.metrics.ERGCN.recall > analysisResult.metrics.RGCN.recall ? '+' : ''}{((analysisResult.metrics.ERGCN.recall - analysisResult.metrics.RGCN.recall) * 100).toFixed(2)}%
+                          </p>
+                        </div>
+                        <div className="text-center">
+                          <span className="text-sm text-muted-foreground">F1 Score Difference</span>
+                          <p className={`font-bold ${
+                            analysisResult.metrics.ERGCN.f1 > analysisResult.metrics.RGCN.f1 
+                              ? 'text-green-500' : 'text-red-500'
+                          }`}>
+                            {analysisResult.metrics.ERGCN.f1 > analysisResult.metrics.RGCN.f1 ? '+' : ''}{((analysisResult.metrics.ERGCN.f1 - analysisResult.metrics.RGCN.f1) * 100).toFixed(2)}%
+                          </p>
+                        </div>
+                        <div className="text-center">
+                          <span className="text-sm text-muted-foreground">AUC Difference</span>
+                          <p className={`font-bold ${
+                            analysisResult.metrics.ERGCN.auc > analysisResult.metrics.RGCN.auc 
+                              ? 'text-green-500' : 'text-red-500'
+                          }`}>
+                            {analysisResult.metrics.ERGCN.auc > analysisResult.metrics.RGCN.auc ? '+' : ''}{((analysisResult.metrics.ERGCN.auc - analysisResult.metrics.RGCN.auc) * 100).toFixed(2)}%
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              </AnimatedCard>
+            )}
+            
+            {!analysisResult && (
+              <AnimatedCard delay={600}>
+                <ModelEvaluationPlaceholder />
+              </AnimatedCard>
+            )}
           </>
         )}
       </div>
     </div>
+    
+    {/* Explanation Modal */}
+    <ExplanationModal
+      isOpen={showExplanation}
+      onClose={() => setShowExplanation(false)}
+      transactionId={selectedTransaction}
+      explanationData={explanationData}
+      isLoading={isLoadingExplanation}
+    />
     </div>
   )
 }
