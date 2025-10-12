@@ -118,7 +118,7 @@ export default function Home() {
             />
             <FeatureCard
               icon={<Brain className="h-8 w-8" />}
-              title="ERGNC Model"
+              title="ERGCN Model"
               description="Advanced machine learning model specifically trained for fraud detection with high accuracy and low false positive rates."
               delay={150}
             />
