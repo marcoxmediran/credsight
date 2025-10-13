@@ -873,10 +873,6 @@ export default function AnalyzePage() {
                             <h3 className="text-lg font-semibold text-blue-500 text-center">R-GCN Predictions</h3>
                             <div className="space-y-3">
                               <div className="rounded-lg border border-border bg-card p-4">
-                                <p className="text-sm text-muted-foreground">Precision</p>
-                                <p className="mt-2 text-2xl font-bold text-blue-500">{stats.rgcnPrecision}%</p>
-                              </div>
-                              <div className="rounded-lg border border-border bg-card p-4">
                                 <p className="text-sm text-muted-foreground">Predicted Legitimate</p>
                                 <p className="mt-2 text-2xl font-bold text-green-500">{stats.rgcnLegitimate}</p>
                               </div>
@@ -898,10 +894,6 @@ export default function AnalyzePage() {
                             <h3 className="text-lg font-semibold text-purple-500 text-center">ERGCN Predictions</h3>
                             <div className="space-y-3">
                               <div className="rounded-lg border border-border bg-card p-4">
-                                <p className="text-sm text-muted-foreground">Precision</p>
-                                <p className="mt-2 text-2xl font-bold text-purple-500">{stats.ergcnPrecision}%</p>
-                              </div>
-                              <div className="rounded-lg border border-border bg-card p-4">
                                 <p className="text-sm text-muted-foreground">Predicted Legitimate</p>
                                 <p className="mt-2 text-2xl font-bold text-green-500">{stats.ergcnLegitimate}</p>
                               </div>
@@ -916,6 +908,7 @@ export default function AnalyzePage() {
                             </div>
                           </div>
                         )}
+
                       </div>
                     </div>
                   ) : (

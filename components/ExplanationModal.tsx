@@ -184,7 +184,7 @@ export default function ExplanationModal({
               If <span className="font-mono">Confidence ≥ Threshold</span> → <span className="text-red-500 font-medium">Fraud</span>
             </p>
             <p className="text-xs text-muted-foreground mt-1">
-              R-GCN: ≥50% | ERGCN: ≥60%
+              R-GCN: ≥50% | ERGCN: ≥50%
             </p>
           </div>
 
@@ -266,7 +266,7 @@ export default function ExplanationModal({
                     <div className="flex justify-between items-center">
                       <span className="text-purple-500 font-medium">ERGCN Threshold:</span>
                       <div className="flex items-center gap-2">
-                        <span className="font-bold">60%</span>
+                        <span className="font-bold">50%</span>
                         {((explanationData.explanations.ergcn?.fraud_probability || 0) * 100) >= 60 && (
                           <Badge variant="destructive" className="text-xs">Fraud</Badge>
                         )}

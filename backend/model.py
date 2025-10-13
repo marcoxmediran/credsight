@@ -53,9 +53,13 @@ class FraudDetectionModel:
         card_to_idx = {card: idx for idx, card in enumerate(unique_cards)}
         email_to_idx = {email: idx for idx, email in enumerate(unique_emails)}
         
-        # Map indices
+        # Map indices with bounds checking
         df['card_idx'] = df['card_key'].map(card_to_idx)
         df['email_idx'] = df['P_emaildomain'].map(email_to_idx)
+        
+        # Store mapping for later use
+        self.card_to_idx = card_to_idx
+        self.email_to_idx = email_to_idx
         
         # Split by day
         days = sorted(df['day'].unique())
@@ -117,15 +121,15 @@ class FraudDetectionModel:
         checkpoint = torch.load(self.model_path, map_location=self.device)
         
         # Extract original dimensions from checkpoint
-        original_num_cards = checkpoint['card_embedding.weight'].shape[0]
-        original_num_emails = checkpoint['email_embedding.weight'].shape[0]
+        self.original_num_cards = checkpoint['card_embedding.weight'].shape[0]
+        self.original_num_emails = checkpoint['email_embedding.weight'].shape[0]
         
         self.model = TemporalFraudDetector(
             in_channels=len(self.numerical_cols),
             hidden_dim=64,
             gru_hidden_dim=32,
-            num_cards=original_num_cards,
-            num_emails=original_num_emails,
+            num_cards=self.original_num_cards,
+            num_emails=self.original_num_emails,
             dropout_rate=0.5
         ).to(self.device)
         
@@ -296,8 +300,20 @@ class TemporalFraudDetector(nn.Module):
             transaction_counts.append(num_trans)
             all_labels.append(graph['transaction'].y)
             
-            card_x = self.card_embedding(torch.arange(self.num_cards, device=device))
-            email_x = self.email_embedding(torch.arange(self.num_emails, device=device))
+            # Clamp indices to prevent out-of-bounds access
+            card_indices = torch.arange(min(self.num_cards, graph['card'].num_nodes), device=device)
+            email_indices = torch.arange(min(self.num_emails, graph['email'].num_nodes), device=device)
+            
+            card_x = self.card_embedding(card_indices)
+            email_x = self.email_embedding(email_indices)
+            
+            # Pad if necessary
+            if card_x.shape[0] < graph['card'].num_nodes:
+                padding = torch.zeros(graph['card'].num_nodes - card_x.shape[0], card_x.shape[1], device=device)
+                card_x = torch.cat([card_x, padding], dim=0)
+            if email_x.shape[0] < graph['email'].num_nodes:
+                padding = torch.zeros(graph['email'].num_nodes - email_x.shape[0], email_x.shape[1], device=device)
+                email_x = torch.cat([email_x, padding], dim=0)
             
             x_dict = {
                 'transaction': trans_x,
