@@ -1,26 +1,42 @@
 import { NextRequest, NextResponse } from 'next/server'
 
+type BackendTransaction = {
+  TransactionID: number
+  TrueLabel: number | null
+  RGCN_Prediction: number
+  RGCN_Confidence?: number
+  ERGCN_Prediction: number
+  ERGCN_Confidence?: number
+  [key: string]: any
+}
+
 type TransactionData = {
   TransactionID: number
-  TrueLabel: number
+  TrueLabel?: number | null
   RGCN?: number
   ERGCN?: number
+  RGCN_Confidence?: number
+  ERGCN_Confidence?: number
+  [key: string]: any
 }
 
 type ModelMetrics = {
-  recall: number
-  f1: number
-  auc: number
+  recall: number | null
+  f1: number | null
+  auc: number | null
+}
+
+type AnalysisMetrics = {
+  RGCN: ModelMetrics
+  ERGCN: ModelMetrics | null
+  summary?: Record<string, any>
+  p_value: number
 }
 
 type AnalysisResult = {
   transactions: TransactionData[]
-  metrics: {
-    RGCN: ModelMetrics
-    ERGCN: ModelMetrics | null
-    p_value: number
-    summary?: any
-  }
+  metrics: AnalysisMetrics
+  error?: string
 }
 
 // Connect to FastAPI backend (Colab/Local/AWS)
@@ -37,18 +53,33 @@ async function callModelInference(transactions: TransactionData[]): Promise<Anal
       body: JSON.stringify({ transactions })
     })
     
+    let result: AnalysisResult
     if (!response.ok) {
-      throw new Error(`Backend error: ${response.status}`)
+      let errorMessage = `Backend error: ${response.status}`
+      try {
+        const errorBody = await response.json()
+        if (errorBody?.detail) {
+          errorMessage = errorBody.detail
+        } else if (errorBody?.error) {
+          errorMessage = errorBody.error
+        }
+      } catch {
+        const text = await response.text()
+        if (text) errorMessage = text
+      }
+      throw new Error(errorMessage)
+    } else {
+      result = await response.json()
     }
-    
-    const result = await response.json()
     
     // Map backend field names to frontend expectations
     if (result.transactions) {
-      result.transactions = result.transactions.map((t: any) => ({
+      result.transactions = result.transactions.map((t: BackendTransaction) => ({
         ...t,
         RGCN: t.RGCN_Prediction,
-        ERGCN: t.ERGCN_Prediction
+        ERGCN: t.ERGCN_Prediction,
+        RGCN_Confidence: t.RGCN_Confidence ?? t.Fraud_Probability,
+        ERGCN_Confidence: t.ERGCN_Confidence ?? t.Fraud_Probability
       }))
     }
     
@@ -80,9 +111,10 @@ export async function POST(request: NextRequest) {
     
     return NextResponse.json(result)
   } catch (error) {
-    console.error('Analysis error:', error)
+    const message = error instanceof Error ? error.message : 'Analysis failed'
+    console.error('Analysis error:', message)
     return NextResponse.json(
-      { error: 'Analysis failed' },
+      { error: message },
       { status: 500 }
     )
   }

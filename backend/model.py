@@ -300,19 +300,22 @@ class TemporalFraudDetector(nn.Module):
             transaction_counts.append(num_trans)
             all_labels.append(graph['transaction'].y)
             
+            card_node_count = graph['card'].num_nodes
+            email_node_count = graph['email'].num_nodes
+            
             # Clamp indices to prevent out-of-bounds access
-            card_indices = torch.arange(min(self.num_cards, graph['card'].num_nodes), device=device)
-            email_indices = torch.arange(min(self.num_emails, graph['email'].num_nodes), device=device)
+            card_indices = torch.arange(min(self.num_cards, card_node_count), device=device)
+            email_indices = torch.arange(min(self.num_emails, email_node_count), device=device)
             
             card_x = self.card_embedding(card_indices)
             email_x = self.email_embedding(email_indices)
             
             # Pad if necessary
-            if card_x.shape[0] < graph['card'].num_nodes:
-                padding = torch.zeros(graph['card'].num_nodes - card_x.shape[0], card_x.shape[1], device=device)
+            if card_x.shape[0] < card_node_count:
+                padding = torch.zeros(card_node_count - card_x.shape[0], card_x.shape[1], device=device)
                 card_x = torch.cat([card_x, padding], dim=0)
-            if email_x.shape[0] < graph['email'].num_nodes:
-                padding = torch.zeros(graph['email'].num_nodes - email_x.shape[0], email_x.shape[1], device=device)
+            if email_x.shape[0] < email_node_count:
+                padding = torch.zeros(email_node_count - email_x.shape[0], email_x.shape[1], device=device)
                 email_x = torch.cat([email_x, padding], dim=0)
             
             x_dict = {
@@ -324,20 +327,23 @@ class TemporalFraudDetector(nn.Module):
             edge_index_list = []
             edge_type_list = []
             
+            card_offset = num_trans
+            email_offset = num_trans + card_node_count
+            
             uses_card_edges = graph['transaction', 'uses_card', 'card'].edge_index
             edge_index_list.append(uses_card_edges + torch.tensor([[0], [num_trans]], device=device))
             edge_type_list.append(torch.zeros(uses_card_edges.shape[1], dtype=torch.long, device=device))
             
             has_email_edges = graph['transaction', 'has_email', 'email'].edge_index
-            edge_index_list.append(has_email_edges + torch.tensor([[0], [num_trans + self.num_cards]], device=device))
+            edge_index_list.append(has_email_edges + torch.tensor([[0], [email_offset]], device=device))
             edge_type_list.append(torch.ones(has_email_edges.shape[1], dtype=torch.long, device=device))
             
             used_by_edges = graph['card', 'used_by', 'transaction'].edge_index
-            edge_index_list.append(used_by_edges + torch.tensor([[num_trans], [0]], device=device))
+            edge_index_list.append(used_by_edges + torch.tensor([[card_offset], [0]], device=device))
             edge_type_list.append(torch.full((used_by_edges.shape[1],), 2, dtype=torch.long, device=device))
             
             belongs_to_edges = graph['email', 'belongs_to', 'transaction'].edge_index
-            edge_index_list.append(belongs_to_edges + torch.tensor([[num_trans + self.num_cards], [0]], device=device))
+            edge_index_list.append(belongs_to_edges + torch.tensor([[email_offset], [0]], device=device))
             edge_type_list.append(torch.full((belongs_to_edges.shape[1],), 3, dtype=torch.long, device=device))
             
             edge_index = torch.cat(edge_index_list, dim=1)
@@ -345,7 +351,7 @@ class TemporalFraudDetector(nn.Module):
             
             x_all = torch.cat([trans_x, card_x, email_x], dim=0)
             
-            total_nodes = num_trans + self.num_cards + self.num_emails
+            total_nodes = num_trans + card_node_count + email_node_count
             batch = torch.zeros(total_nodes, dtype=torch.long, device=device)
             
             glu_node_features, glu_pooled = self.glu(x_all, edge_index, edge_type, batch)

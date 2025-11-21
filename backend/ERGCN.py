@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.data import HeteroData
 from torch_geometric.nn import RGCNConv, global_max_pool
-from sklearn.metrics import classification_report
+from sklearn.metrics import classification_report, f1_score, recall_score, roc_auc_score
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -14,7 +14,7 @@ torch.manual_seed(42)
 np.random.seed(42)
 
 class FraudDetectionModel:
-    def __init__(self, model_path="training_v12_model.pth"):
+    def __init__(self, model_path="ERGCN_files/training_v12_model.pth"):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.model_path = model_path
         self.threshold = 0.5
@@ -175,6 +175,20 @@ class FraudDetectionModel:
         print(f"Predicted fraud: {binary_preds.sum()}")
         print(f"Actual fraud: {true_labels.sum()}")
         print(f"Accuracy: {accuracy:.4f}")
+        
+        # Calculate metrics
+        f1 = f1_score(true_labels, binary_preds)
+        recall = recall_score(true_labels, binary_preds)
+        
+        # AUC (only if both classes present)
+        if len(np.unique(true_labels)) > 1:
+            auc_score = roc_auc_score(true_labels, raw_scores)
+        else:
+            auc_score = 0.0
+        
+        print(f"F1 Score: {f1:.4f}")
+        print(f"Recall: {recall:.4f}")
+        print(f"AUC: {auc_score:.4f}")
         
         # Print classification report if we have both classes
         if len(np.unique(true_labels)) > 1:
@@ -370,8 +384,14 @@ class TemporalFraudDetector(nn.Module):
 
 
 if __name__ == "__main__":
+    import time
+    start_time = time.time()
     fraud_detector = FraudDetectionModel()
-    results = fraud_detector.predict("demo.csv")
+    results = fraud_detector.predict("ERGCN_files/demo.csv")
+    end_time = time.time()
+    elapsed = end_time - start_time
+    print(f"\nTime taken: {elapsed:.4f} seconds")
+
     print("\n", results.head(20))
-    results.to_csv("fraud_predictions.csv", index=False)
-    print("\nSaved to 'fraud_predictions.csv'")
+    # results.to_csv("fraud_predictions.csv", index=False)
+    # print("\nSaved to 'fraud_predictions.csv'")

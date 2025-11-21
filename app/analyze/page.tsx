@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
-import { ArrowLeft, Upload, Download, ArrowUpDown, Search, ChevronLeft, ChevronRight, Info, HelpCircle, Expand } from "lucide-react"
+import { ArrowLeft, Upload, Download, ArrowUpDown, Search, ChevronLeft, ChevronRight, Info, HelpCircle, Expand, AlertCircle, AlertTriangle } from "lucide-react"
 import Link from "next/link"
 import LiquidEther from "@/components/LiquidEther"
 import ModelEvaluationPlaceholder from "@/components/ModelEvaluationPlaceholder"
@@ -18,46 +18,48 @@ import ExplanationModal from "@/components/ExplanationModal"
 
 type TransactionData = {
   TransactionID: number
-  TrueLabel?: number
-  RGCN?: number
-  ERGCN?: number
+  TrueLabel?: number | null
+  RGCN?: number | null
+  ERGCN?: number | null
+  RGCN_Confidence?: number | null
+  ERGCN_Confidence?: number | null
   [key: string]: any  // Allow any additional CSV columns
 }
 
 type ModelMetrics = {
-  recall: number
-  f1: number
-  auc: number
+  recall: number | null
+  f1: number | null
+  auc: number | null
+}
+
+type SummaryMetrics = {
+  total_transactions: number
+  fraud_detected_by_RGCN: number
+  legitimate_detected_by_RGCN: number
+  fraud_rate_of_RGCN?: number
+  fraud_detected_by_ERGCN?: number
+  legitimate_detected_by_ERGCN?: number
+  fraud_rate_of_ERGCN?: number
+}
+
+type AnalysisMetrics = {
+  RGCN: ModelMetrics
+  ERGCN: ModelMetrics | null
+  p_value: number
+  summary?: SummaryMetrics
 }
 
 type AnalysisResult = {
   transactions: TransactionData[]
-  metrics: {
-    RGCN: ModelMetrics
-    ERGCN: ModelMetrics
-    p_value: number
-  }
+  metrics: AnalysisMetrics
+  error?: string
 }
 
 type FilterType = "all" | "legit" | "fraud" | "both_correct" | "both_incorrect" | "rgcn_correct" | "ergcn_correct" | "rgcn_incorrect" | "ergcn_incorrect" | "rgcn_fraud" | "rgcn_legit" | "ergcn_fraud" | "ergcn_legit"
 
-// Example transaction data (for demonstration purposes)
-const EXAMPLE_DATA: TransactionData[] = [
-  { TransactionID: 1001, TrueLabel: 0, RGCN: 0, ERGCN: 0 },
-  { TransactionID: 1002, TrueLabel: 0, RGCN: 0, ERGCN: 0 },
-  { TransactionID: 1003, TrueLabel: 1, RGCN: 0, ERGCN: 1 },
-  { TransactionID: 1004, TrueLabel: 0, RGCN: 0, ERGCN: 0 },
-  { TransactionID: 1005, TrueLabel: 0, RGCN: 1, ERGCN: 0 },
-  { TransactionID: 1006, TrueLabel: 0, RGCN: 0, ERGCN: 0 },
-  { TransactionID: 1007, TrueLabel: 1, RGCN: 1, ERGCN: 1 },
-  { TransactionID: 1008, TrueLabel: 0, RGCN: 0, ERGCN: 0 },
-  { TransactionID: 1009, TrueLabel: 0, RGCN: 0, ERGCN: 0 },
-  { TransactionID: 1010, TrueLabel: 0, RGCN: 0, ERGCN: 0 },
-]
-
 export default function AnalyzePage() {
-  const [data, setData] = useState<TransactionData[]>(EXAMPLE_DATA)
-  const [filteredData, setFilteredData] = useState<TransactionData[]>(EXAMPLE_DATA)
+  const [data, setData] = useState<TransactionData[]>([])
+  const [filteredData, setFilteredData] = useState<TransactionData[]>([])
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
@@ -71,30 +73,52 @@ export default function AnalyzePage() {
   const [itemsPerPage, setItemsPerPage] = useState(10)
   const [showExplanation, setShowExplanation] = useState(false)
   const [selectedTransaction, setSelectedTransaction] = useState<number | null>(null)
+  const [selectedTransactionData, setSelectedTransactionData] = useState<TransactionData | null>(null)
   const [explanationData, setExplanationData] = useState<any>(null)
   const [isLoadingExplanation, setIsLoadingExplanation] = useState(false)
   const [isProcessingFile, setIsProcessingFile] = useState(false)
   const [processingProgress, setProcessingProgress] = useState(0)
   const [hasGroundTruth, setHasGroundTruth] = useState(true)
   const [hasUploadedCSV, setHasUploadedCSV] = useState(false)
+  const [analysisError, setAnalysisError] = useState<string | null>(null)
+  const [ergcnWarning, setErgcnWarning] = useState<string | null>(null)
 
   const analyzeWithModels = async (transactions: TransactionData[]) => {
     setIsAnalyzing(true)
+    setAnalysisError(null)
+    setErgcnWarning(null)
     try {
       const response = await fetch('/api/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ transactions })
       })
+      const payload = await response.json()
       
-      if (!response.ok) throw new Error('Analysis failed')
+      if (!response.ok || payload?.error) {
+        const errorMessage = payload?.error || 'Analysis failed'
+        setAnalysisError(errorMessage)
+        return
+      }
       
-      const result: AnalysisResult = await response.json()
+      const result: AnalysisResult = payload
+      const containsGroundTruth = result.transactions?.some((tx) => tx.TrueLabel !== null && tx.TrueLabel !== undefined)
+      
       setAnalysisResult(result)
       setData(result.transactions)
       setFilteredData(result.transactions)
+      setHasGroundTruth(containsGroundTruth)
+      
+      const ergcnMetrics = result.metrics?.ERGCN
+      const hasErgcnMetrics = Boolean(ergcnMetrics && (ergcnMetrics.recall !== null || ergcnMetrics.f1 !== null || ergcnMetrics.auc !== null))
+      const hasErgcnConfidence = result.transactions?.some((tx) => typeof tx.ERGCN_Confidence === 'number')
+      
+      if (!hasErgcnMetrics || !hasErgcnConfidence) {
+        setErgcnWarning("ERGCN analysis data is unavailable. Displaying R-GCN results only.")
+      }
     } catch (error) {
-      alert('Analysis failed. Please try again.')
+      console.error('Analysis failed:', error)
+      setAnalysisError('Analysis failed. Please try again.')
     } finally {
       setIsAnalyzing(false)
     }
@@ -349,13 +373,15 @@ export default function AnalyzePage() {
     })
   }
 
-  const explainTransaction = async (transactionId: number) => {
+  const explainTransaction = async (transaction: TransactionData) => {
     setIsLoadingExplanation(true)
-    setSelectedTransaction(transactionId)
+    setExplanationData(null)
+    setSelectedTransaction(transaction.TransactionID)
+    setSelectedTransactionData(transaction)
     setShowExplanation(true)
     
     try {
-      const response = await fetch(`/api/explain/${transactionId}?model_type=both`)
+      const response = await fetch(`/api/explain/${transaction.TransactionID}?model_type=both`)
       
       if (response.ok) {
         const explanation = await response.json()
@@ -363,12 +389,12 @@ export default function AnalyzePage() {
       } else {
         // Use fallback mock data when API fails
         const mockExplanation = {
-          transaction_id: transactionId,
+          transaction_id: transaction.TransactionID,
           explanations: {
             rgcn: {
               model: "R-GCN",
-              prediction: Math.random() > 0.5 ? 1 : 0,
-              fraud_probability: Math.random(),
+              prediction: transaction.RGCN ?? (Math.random() > 0.5 ? 1 : 0),
+              fraud_probability: transaction.RGCN_Confidence ?? Math.random(),
               feature_importance: [
                 { feature: "TransactionAmt", importance: Math.random() * 0.8, rank: 1 },
                 { feature: "card1", importance: Math.random() * 0.6, rank: 2 },
@@ -382,8 +408,8 @@ export default function AnalyzePage() {
             },
             ergcn: {
               model: "ERGCN",
-              prediction: Math.random() > 0.5 ? 1 : 0,
-              fraud_probability: Math.random(),
+              prediction: transaction.ERGCN ?? (Math.random() > 0.5 ? 1 : 0),
+              fraud_probability: transaction.ERGCN_Confidence ?? Math.random(),
               feature_importance: [
                 { feature: "TransactionAmt", importance: Math.random() * 0.9, rank: 1 },
                 { feature: "D1", importance: Math.random() * 0.7, rank: 2 },
@@ -403,12 +429,12 @@ export default function AnalyzePage() {
       console.error('Interpretation error:', error)
       // Fallback mock data for any network/parsing errors
       const mockExplanation = {
-        transaction_id: transactionId,
+          transaction_id: transaction.TransactionID,
         explanations: {
           rgcn: {
             model: "R-GCN",
-            prediction: Math.random() > 0.5 ? 1 : 0,
-            fraud_probability: Math.random(),
+              prediction: transaction.RGCN ?? (Math.random() > 0.5 ? 1 : 0),
+              fraud_probability: transaction.RGCN_Confidence ?? Math.random(),
             feature_importance: [
               { feature: "TransactionAmt", importance: Math.random() * 0.8, rank: 1 },
               { feature: "card1", importance: Math.random() * 0.6, rank: 2 },
@@ -422,8 +448,8 @@ export default function AnalyzePage() {
           },
           ergcn: {
             model: "ERGCN",
-            prediction: Math.random() > 0.5 ? 1 : 0,
-            fraud_probability: Math.random(),
+              prediction: transaction.ERGCN ?? (Math.random() > 0.5 ? 1 : 0),
+              fraud_probability: transaction.ERGCN_Confidence ?? Math.random(),
             feature_importance: [
               { feature: "TransactionAmt", importance: Math.random() * 0.9, rank: 1 },
               { feature: "D1", importance: Math.random() * 0.7, rank: 2 },
@@ -480,13 +506,27 @@ export default function AnalyzePage() {
     setCurrentPage(1)
   }
 
+  const summary = analysisResult?.metrics.summary
+  const summaryTotalTransactions = summary?.total_transactions ?? null
+  const summaryFraudRate = typeof summary?.fraud_rate_of_RGCN === "number" ? summary.fraud_rate_of_RGCN : null
+  const summaryErgcnFraudDetected = typeof summary?.fraud_detected_by_ERGCN === "number" ? summary.fraud_detected_by_ERGCN : null
+  const summaryErgcnLegitDetected = typeof summary?.legitimate_detected_by_ERGCN === "number" ? summary.legitimate_detected_by_ERGCN : null
+
+  const filteredGroundTruthLegit = hasGroundTruth ? filteredData.filter((item) => item.TrueLabel === 0).length : null
+  const filteredGroundTruthFraud = hasGroundTruth ? filteredData.filter((item) => item.TrueLabel === 1).length : null
+  const filteredGroundTruthFraudRate =
+    hasGroundTruth && filteredData.length > 0 && filteredGroundTruthFraud !== null
+      ? ((filteredGroundTruthFraud / filteredData.length) * 100).toFixed(2)
+      : null
+
   const stats = {
-    total: filteredData.length,
-    legitimate: hasGroundTruth ? filteredData.filter((item) => item.TrueLabel === 0).length : null,
-    fraud: hasGroundTruth ? filteredData.filter((item) => item.TrueLabel === 1).length : null,
-    fraudRate: hasGroundTruth && filteredData.length > 0
-      ? ((filteredData.filter((item) => item.TrueLabel === 1).length / filteredData.length) * 100).toFixed(2)
-      : null,
+    total: summaryTotalTransactions ?? filteredData.length,
+    legitimate: hasGroundTruth ? filteredGroundTruthLegit : null,
+    fraud: hasGroundTruth ? filteredGroundTruthFraud : null,
+    fraudRate:
+      hasGroundTruth && summaryFraudRate !== null
+        ? summaryFraudRate.toFixed(2)
+        : filteredGroundTruthFraudRate,
     // Calculate Precision = True Positives / (True Positives + False Positives)
     rgcnPrecision: analysisResult && hasGroundTruth
       ? (() => {
@@ -505,16 +545,38 @@ export default function AnalyzePage() {
         })()
       : null,
     // Model predictions for both protocols
-    rgcnLegitimate: analysisResult ? filteredData.filter((item) => item.RGCN === 0).length : null,
-    rgcnFraud: analysisResult ? filteredData.filter((item) => item.RGCN === 1).length : null,
-    rgcnFraudRate: analysisResult && filteredData.length > 0
-      ? ((filteredData.filter((item) => item.RGCN === 1).length / filteredData.length) * 100).toFixed(2)
-      : null,
-    ergcnLegitimate: analysisResult ? filteredData.filter((item) => item.ERGCN === 0).length : null,
-    ergcnFraud: analysisResult ? filteredData.filter((item) => item.ERGCN === 1).length : null,
-    ergcnFraudRate: analysisResult && filteredData.length > 0
-      ? ((filteredData.filter((item) => item.ERGCN === 1).length / filteredData.length) * 100).toFixed(2)
-      : null,
+    rgcnLegitimate: summary?.legitimate_detected_by_RGCN ?? (analysisResult ? filteredData.filter((item) => item.RGCN === 0).length : null),
+    rgcnFraud: summary?.fraud_detected_by_RGCN ?? (analysisResult ? filteredData.filter((item) => item.RGCN === 1).length : null),
+    rgcnFraudRate:
+      summary && summary.total_transactions > 0
+        ? ((summary.fraud_detected_by_RGCN / summary.total_transactions) * 100).toFixed(2)
+        : analysisResult && filteredData.length > 0
+          ? ((filteredData.filter((item) => item.RGCN === 1).length / filteredData.length) * 100).toFixed(2)
+          : null,
+    ergcnLegitimate: summaryErgcnLegitDetected ?? (analysisResult ? filteredData.filter((item) => item.ERGCN === 0).length : null),
+    ergcnFraud: summaryErgcnFraudDetected ?? (analysisResult ? filteredData.filter((item) => item.ERGCN === 1).length : null),
+    ergcnFraudRate:
+      summary && summary.total_transactions > 0 && summaryErgcnFraudDetected !== null
+        ? ((summaryErgcnFraudDetected / summary.total_transactions) * 100).toFixed(2)
+        : analysisResult && filteredData.length > 0
+          ? ((filteredData.filter((item) => item.ERGCN === 1).length / filteredData.length) * 100).toFixed(2)
+          : null,
+  }
+
+  const formatMetricPercentage = (value?: number | null) => {
+    if (typeof value !== "number" || Number.isNaN(value)) return "N/A"
+    return `${(value * 100).toFixed(2)}%`
+  }
+
+  const buildDeltaDisplay = (ergcnValue?: number | null, rgcnValue?: number | null) => {
+    if (typeof ergcnValue !== "number" || typeof rgcnValue !== "number" || Number.isNaN(ergcnValue) || Number.isNaN(rgcnValue)) {
+      return { label: "N/A", className: "text-muted-foreground" }
+    }
+    const diff = (ergcnValue - rgcnValue) * 100
+    return {
+      label: `${diff >= 0 ? "+" : ""}${diff.toFixed(2)}%`,
+      className: diff >= 0 ? "text-green-500" : "text-red-500"
+    }
   }
 
   return (
@@ -545,6 +607,26 @@ export default function AnalyzePage() {
       <ScrollBackButton />
 
       <div className="mx-auto max-w-7xl px-4 py-12">
+        {analysisError && (
+          <div className="mb-6 rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-destructive" role="alert">
+            <div className="flex items-center gap-2 font-semibold">
+              <AlertCircle className="h-4 w-4" />
+              <span>Analysis failed</span>
+            </div>
+            <p className="mt-2 text-sm text-destructive/90">{analysisError}</p>
+          </div>
+        )}
+
+        {ergcnWarning && (
+          <div className="mb-6 rounded-lg border border-yellow-500/40 bg-yellow-500/10 p-4 text-yellow-600" role="alert">
+            <div className="flex items-center gap-2 font-semibold">
+              <AlertTriangle className="h-4 w-4" />
+              <span>ERGCN unavailable</span>
+            </div>
+            <p className="mt-2 text-sm text-yellow-600/90">{ergcnWarning}</p>
+          </div>
+        )}
+
         <AnimatedCard>
           <h1 className="mb-8 text-center text-4xl font-bold md:text-5xl bg-gradient-to-b from-white/90 via-white/70 to-purple-500 bg-clip-text text-transparent">Fraud Detection Analysis</h1>
         </AnimatedCard>
@@ -770,7 +852,7 @@ export default function AnalyzePage() {
                                   <Button
                                     variant="ghost"
                                     size="sm"
-                                    onClick={() => explainTransaction(row.TransactionID)}
+      onClick={() => explainTransaction(row)}
                                     className="h-8 w-8 p-0 cursor-pointer hover:bg-primary/10 transition-colors"
                                   >
                                     <Expand className="h-4 w-4" />
@@ -989,15 +1071,15 @@ export default function AnalyzePage() {
                         <div className="grid gap-3">
                           <div className="flex justify-between items-center p-3 bg-card rounded-lg border">
                             <span className="text-sm text-muted-foreground">Recall</span>
-                            <span className="font-bold">{(analysisResult.metrics.RGCN.recall * 100).toFixed(2)}%</span>
+                          <span className="font-bold">{formatMetricPercentage(analysisResult.metrics.RGCN.recall)}</span>
                           </div>
                           <div className="flex justify-between items-center p-3 bg-card rounded-lg border">
                             <span className="text-sm text-muted-foreground">F1 Score</span>
-                            <span className="font-bold">{(analysisResult.metrics.RGCN.f1 * 100).toFixed(2)}%</span>
+                          <span className="font-bold">{formatMetricPercentage(analysisResult.metrics.RGCN.f1)}</span>
                           </div>
                           <div className="flex justify-between items-center p-3 bg-card rounded-lg border">
                             <span className="text-sm text-muted-foreground">AUC</span>
-                            <span className="font-bold">{(analysisResult.metrics.RGCN.auc * 100).toFixed(2)}%</span>
+                          <span className="font-bold">{formatMetricPercentage(analysisResult.metrics.RGCN.auc)}</span>
                           </div>
                         </div>
                       </div>
@@ -1007,15 +1089,15 @@ export default function AnalyzePage() {
                         <div className="grid gap-3">
                           <div className="flex justify-between items-center p-3 bg-card rounded-lg border">
                             <span className="text-sm text-muted-foreground">Recall</span>
-                            <span className="font-bold">{analysisResult.metrics.ERGCN ? (analysisResult.metrics.ERGCN.recall * 100).toFixed(2) : 'N/A'}%</span>
+                            <span className="font-bold">{formatMetricPercentage(analysisResult.metrics.ERGCN?.recall)}</span>
                           </div>
                           <div className="flex justify-between items-center p-3 bg-card rounded-lg border">
                             <span className="text-sm text-muted-foreground">F1 Score</span>
-                            <span className="font-bold">{analysisResult.metrics.ERGCN ? (analysisResult.metrics.ERGCN.f1 * 100).toFixed(2) : 'N/A'}%</span>
+                            <span className="font-bold">{formatMetricPercentage(analysisResult.metrics.ERGCN?.f1)}</span>
                           </div>
                           <div className="flex justify-between items-center p-3 bg-card rounded-lg border">
                             <span className="text-sm text-muted-foreground">AUC</span>
-                            <span className="font-bold">{analysisResult.metrics.ERGCN ? (analysisResult.metrics.ERGCN.auc * 100).toFixed(2) : 'N/A'}%</span>
+                            <span className="font-bold">{formatMetricPercentage(analysisResult.metrics.ERGCN?.auc)}</span>
                           </div>
                         </div>
                       </div>
@@ -1024,35 +1106,33 @@ export default function AnalyzePage() {
                     <div className="mt-6 p-4 bg-muted rounded-lg">
                       <h4 className="font-semibold mb-2">Performance Difference (ERGCN - R-GCN)</h4>
                       <p className="text-xs text-muted-foreground mb-3">Positive values indicate ERGCN performs better (percentage points)</p>
-                      <div className="grid gap-2 md:grid-cols-3">
-                        <div className="text-center">
-                          <span className="text-sm text-muted-foreground">Recall Difference</span>
-                          <p className={`font-bold ${
-                            analysisResult.metrics.ERGCN && analysisResult.metrics.ERGCN.recall > analysisResult.metrics.RGCN.recall 
-                              ? 'text-green-500' : 'text-red-500'
-                          }`}>
-                            {analysisResult.metrics.ERGCN ? (analysisResult.metrics.ERGCN.recall > analysisResult.metrics.RGCN.recall ? '+' : '') + ((analysisResult.metrics.ERGCN.recall - analysisResult.metrics.RGCN.recall) * 100).toFixed(2) + '%' : 'N/A'}
-                          </p>
-                        </div>
-                        <div className="text-center">
-                          <span className="text-sm text-muted-foreground">F1 Score Difference</span>
-                          <p className={`font-bold ${
-                            analysisResult.metrics.ERGCN && analysisResult.metrics.ERGCN.f1 > analysisResult.metrics.RGCN.f1 
-                              ? 'text-green-500' : 'text-red-500'
-                          }`}>
-                            {analysisResult.metrics.ERGCN ? (analysisResult.metrics.ERGCN.f1 > analysisResult.metrics.RGCN.f1 ? '+' : '') + ((analysisResult.metrics.ERGCN.f1 - analysisResult.metrics.RGCN.f1) * 100).toFixed(2) + '%' : 'N/A'}
-                          </p>
-                        </div>
-                        <div className="text-center">
-                          <span className="text-sm text-muted-foreground">AUC Difference</span>
-                          <p className={`font-bold ${
-                            analysisResult.metrics.ERGCN && analysisResult.metrics.ERGCN.auc > analysisResult.metrics.RGCN.auc 
-                              ? 'text-green-500' : 'text-red-500'
-                          }`}>
-                            {analysisResult.metrics.ERGCN ? (analysisResult.metrics.ERGCN.auc > analysisResult.metrics.RGCN.auc ? '+' : '') + ((analysisResult.metrics.ERGCN.auc - analysisResult.metrics.RGCN.auc) * 100).toFixed(2) + '%' : 'N/A'}
-                          </p>
-                        </div>
-                      </div>
+                      {(() => {
+                        const recallDelta = buildDeltaDisplay(analysisResult.metrics.ERGCN?.recall, analysisResult.metrics.RGCN.recall)
+                        const f1Delta = buildDeltaDisplay(analysisResult.metrics.ERGCN?.f1, analysisResult.metrics.RGCN.f1)
+                        const aucDelta = buildDeltaDisplay(analysisResult.metrics.ERGCN?.auc, analysisResult.metrics.RGCN.auc)
+                        return (
+                          <div className="grid gap-2 md:grid-cols-3">
+                            <div className="text-center">
+                              <span className="text-sm text-muted-foreground">Recall Difference</span>
+                              <p className={`font-bold ${recallDelta.className}`}>
+                                {recallDelta.label}
+                              </p>
+                            </div>
+                            <div className="text-center">
+                              <span className="text-sm text-muted-foreground">F1 Score Difference</span>
+                              <p className={`font-bold ${f1Delta.className}`}>
+                                {f1Delta.label}
+                              </p>
+                            </div>
+                            <div className="text-center">
+                              <span className="text-sm text-muted-foreground">AUC Difference</span>
+                              <p className={`font-bold ${aucDelta.className}`}>
+                                {aucDelta.label}
+                              </p>
+                            </div>
+                          </div>
+                        )
+                      })()}
                     </div>
                   </CardContent>
                 </Card>
@@ -1072,10 +1152,16 @@ export default function AnalyzePage() {
     {/* Explanation Modal */}
     <ExplanationModal
       isOpen={showExplanation}
-      onClose={() => setShowExplanation(false)}
+      onClose={() => {
+        setShowExplanation(false)
+        setSelectedTransaction(null)
+        setSelectedTransactionData(null)
+        setExplanationData(null)
+      }}
       transactionId={selectedTransaction}
       explanationData={explanationData}
       isLoading={isLoadingExplanation}
+      transactionDetails={selectedTransactionData}
     />
     </div>
   )

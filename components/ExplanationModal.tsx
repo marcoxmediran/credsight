@@ -6,12 +6,20 @@ import { Button } from "@/components/ui/button"
 import { Loader2, AlertTriangle, CheckCircle, X } from "lucide-react"
 import { useState } from "react"
 
+type TransactionSnapshot = {
+  RGCN?: number | null
+  ERGCN?: number | null
+  RGCN_Confidence?: number | null
+  ERGCN_Confidence?: number | null
+}
+
 interface ExplanationModalProps {
   isOpen: boolean
   onClose: () => void
   transactionId: number | null
   explanationData: any
   isLoading: boolean
+  transactionDetails?: TransactionSnapshot | null
 }
 
 export default function ExplanationModal({
@@ -19,11 +27,29 @@ export default function ExplanationModal({
   onClose,
   transactionId,
   explanationData,
-  isLoading
+  isLoading,
+  transactionDetails
 }: ExplanationModalProps) {
   const [activeTab, setActiveTab] = useState("comparison")
   
   if (!isOpen || !transactionId) return null
+
+  const getModelSnapshot = (modelKey: "rgcn" | "ergcn") => {
+    const explanationModel = explanationData?.explanations?.[modelKey]
+    const fallbackPrediction = modelKey === "rgcn" ? transactionDetails?.RGCN : transactionDetails?.ERGCN
+    const fallbackConfidence = modelKey === "rgcn" ? transactionDetails?.RGCN_Confidence : transactionDetails?.ERGCN_Confidence
+    const base = {
+      prediction: fallbackPrediction ?? null,
+      fraud_probability: fallbackConfidence ?? null
+    }
+    if (!explanationModel) {
+      return base
+    }
+    return {
+      ...base,
+      ...explanationModel
+    }
+  }
 
   const renderFeatureImportance = (features: any[], modelName: string) => {
     if (!features || features.length === 0) {
@@ -86,8 +112,11 @@ export default function ExplanationModal({
       )
     }
 
-    const confidenceColor = modelData.fraud_probability > 0.5 ? "text-red-500" : "text-green-500"
-    const predictionLabel = modelData.prediction === 1 ? "Fraud" : "Legitimate"
+    const probability = typeof modelData.fraud_probability === "number" ? modelData.fraud_probability : null
+    const confidenceColor = probability !== null && probability > 0.5 ? "text-red-500" : "text-green-500"
+    const predictionValue = modelData.prediction
+    const predictionLabel = predictionValue === 1 ? "Fraud" : predictionValue === 0 ? "Legitimate" : "Unknown"
+    const badgeVariant = predictionValue === 1 ? "destructive" : predictionValue === 0 ? "secondary" : "outline"
 
     return (
       <div className="space-y-6">
@@ -96,7 +125,7 @@ export default function ExplanationModal({
           <CardHeader>
             <CardTitle className="flex items-center justify-between">
               <span>{modelName} Prediction</span>
-              <Badge variant={modelData.prediction === 1 ? "destructive" : "secondary"}>
+              <Badge variant={badgeVariant}>
                 {predictionLabel}
               </Badge>
             </CardTitle>
@@ -107,13 +136,13 @@ export default function ExplanationModal({
                 <div className="flex justify-between items-center mb-2">
                   <span className="text-sm font-medium">Fraud Probability</span>
                   <span className={`text-sm font-bold ${confidenceColor}`}>
-                    {(modelData.fraud_probability * 100).toFixed(1)}%
+                    {probability !== null ? `${(probability * 100).toFixed(1)}%` : "N/A"}
                   </span>
                 </div>
                 <div className="w-full bg-muted rounded-full h-3">
                   <div 
                     className="bg-primary h-3 rounded-full transition-all duration-300" 
-                    style={{ width: `${modelData.fraud_probability * 100}%` }}
+                    style={{ width: probability !== null ? `${Math.min(Math.max(probability * 100, 0), 100)}%` : "0%" }}
                   />
                 </div>
               </div>
@@ -165,6 +194,25 @@ export default function ExplanationModal({
     )
   }
 
+  const buildSnapshotSummary = (snapshot: { prediction?: number | null, fraud_probability?: number | null }, threshold = 0.5) => {
+    const probability = typeof snapshot?.fraud_probability === "number" ? snapshot.fraud_probability : null
+    return {
+      probability,
+      confidenceText: probability !== null ? `${(probability * 100).toFixed(1)}%` : "N/A",
+      badgeVariant: snapshot?.prediction === 1 ? "destructive" : snapshot?.prediction === 0 ? "secondary" : "outline",
+      predictionLabel: snapshot?.prediction === 1 ? "Fraud" : snapshot?.prediction === 0 ? "Legitimate" : "Unknown",
+      meetsThreshold: probability !== null && probability >= threshold
+    }
+  }
+
+  const rgcnSnapshot = getModelSnapshot("rgcn")
+  const ergcnSnapshot = getModelSnapshot("ergcn")
+  const rgcnSummary = buildSnapshotSummary(rgcnSnapshot, 0.5)
+  const ergcnSummary = buildSnapshotSummary(ergcnSnapshot, 0.6)
+
+  const hasSnapshotData = Boolean(transactionDetails || explanationData?.explanations)
+  const hasDetailedInsights = Boolean(explanationData?.explanations)
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
       <div className="bg-background border rounded-lg shadow-lg max-w-4xl max-h-[90vh] overflow-y-auto w-full mx-4">
@@ -184,22 +232,24 @@ export default function ExplanationModal({
               If <span className="font-mono">Confidence ≥ Threshold</span> → <span className="text-red-500 font-medium">Fraud</span>
             </p>
             <p className="text-xs text-muted-foreground mt-1">
-              R-GCN: ≥50% | ERGCN: ≥50%
+              R-GCN: ≥50% | ERGCN: ≥60%
             </p>
           </div>
 
-        {isLoading ? (
-          <div className="flex items-center justify-center py-12">
-            <Loader2 className="h-8 w-8 animate-spin" />
-            <span className="ml-2">Generating interpretation...</span>
+        {isLoading && (
+          <div className="flex items-center justify-center py-6">
+            <Loader2 className="h-5 w-5 animate-spin" />
+            <span className="ml-2 text-sm text-muted-foreground">Generating interpretation...</span>
           </div>
-        ) : explanationData?.error ? (
+        )}
+
+        {explanationData?.error ? (
           <div className="text-center py-12">
             <AlertTriangle className="h-12 w-12 text-red-500 mx-auto mb-4" />
             <p className="text-lg font-medium">Interpretation Failed</p>
             <p className="text-muted-foreground">{explanationData.error}</p>
           </div>
-        ) : explanationData?.explanations ? (
+        ) : hasSnapshotData ? (
           <div className="w-full">
             <div className="space-y-6">
               <div className="grid gap-6 md:grid-cols-2">
@@ -211,15 +261,13 @@ export default function ExplanationModal({
                     <div className="space-y-4">
                       <div className="flex justify-between items-center">
                         <span>Prediction:</span>
-                        <Badge variant={explanationData.explanations.rgcn?.prediction === 1 ? "destructive" : "secondary"}>
-                          {explanationData.explanations.rgcn?.prediction === 1 ? "Fraud" : "Legitimate"}
+                        <Badge variant={rgcnSummary.badgeVariant}>
+                          {rgcnSummary.predictionLabel}
                         </Badge>
                       </div>
                       <div className="flex justify-between items-center">
                         <span>Confidence:</span>
-                        <span className="font-bold">
-                          {((explanationData.explanations.rgcn?.fraud_probability || 0) * 100).toFixed(1)}%
-                        </span>
+                        <span className="font-bold">{rgcnSummary.confidenceText}</span>
                       </div>
                     </div>
                   </CardContent>
@@ -233,15 +281,13 @@ export default function ExplanationModal({
                     <div className="space-y-4">
                       <div className="flex justify-between items-center">
                         <span>Prediction:</span>
-                        <Badge variant={explanationData.explanations.ergcn?.prediction === 1 ? "destructive" : "secondary"}>
-                          {explanationData.explanations.ergcn?.prediction === 1 ? "Fraud" : "Legitimate"}
+                        <Badge variant={ergcnSummary.badgeVariant}>
+                          {ergcnSummary.predictionLabel}
                         </Badge>
                       </div>
                       <div className="flex justify-between items-center">
                         <span>Confidence:</span>
-                        <span className="font-bold">
-                          {((explanationData.explanations.ergcn?.fraud_probability || 0) * 100).toFixed(1)}%
-                        </span>
+                        <span className="font-bold">{ergcnSummary.confidenceText}</span>
                       </div>
                     </div>
                   </CardContent>
@@ -258,7 +304,7 @@ export default function ExplanationModal({
                       <span className="text-blue-500 font-medium">R-GCN Threshold:</span>
                       <div className="flex items-center gap-2">
                         <span className="font-bold">50%</span>
-                        {((explanationData.explanations.rgcn?.fraud_probability || 0) * 100) >= 50 && (
+                        {rgcnSummary.meetsThreshold && (
                           <Badge variant="destructive" className="text-xs">Fraud</Badge>
                         )}
                       </div>
@@ -266,8 +312,8 @@ export default function ExplanationModal({
                     <div className="flex justify-between items-center">
                       <span className="text-purple-500 font-medium">ERGCN Threshold:</span>
                       <div className="flex items-center gap-2">
-                        <span className="font-bold">50%</span>
-                        {((explanationData.explanations.ergcn?.fraud_probability || 0) * 100) >= 60 && (
+                        <span className="font-bold">60%</span>
+                        {ergcnSummary.meetsThreshold && (
                           <Badge variant="destructive" className="text-xs">Fraud</Badge>
                         )}
                       </div>
@@ -275,6 +321,17 @@ export default function ExplanationModal({
                   </div>
                 </CardContent>
               </Card>
+
+              {hasDetailedInsights ? (
+                <div className="grid gap-6 md:grid-cols-2">
+                  {renderModelExplanation(explanationData.explanations.rgcn, "R-GCN Detailed Insights")}
+                  {renderModelExplanation(explanationData.explanations.ergcn, "ERGCN Detailed Insights")}
+                </div>
+              ) : (
+                <div className="text-center text-sm text-muted-foreground py-6">
+                  Detailed explanations will appear once available.
+                </div>
+              )}
             </div>
           </div>
         ) : (

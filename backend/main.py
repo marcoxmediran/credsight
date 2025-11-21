@@ -128,10 +128,17 @@ async def analyze_transactions_endpoint(batch: TransactionBatch):
             predicted_labels = results_df['Predicted_Label'].values
             raw_scores = results_df['Raw_Score'].values
             
+            recall = float(recall_score(true_labels, predicted_labels, zero_division=0))
+            f1 = float(f1_score(true_labels, predicted_labels, zero_division=0))
+            if len(set(true_labels)) > 1:
+                auc = float(roc_auc_score(true_labels, raw_scores))
+            else:
+                auc = None
+            
             ergcn_results['metrics'] = {
-                'recall': float(recall_score(true_labels, predicted_labels)),
-                'f1': float(f1_score(true_labels, predicted_labels)),
-                'auc': float(roc_auc_score(true_labels, raw_scores))
+                'recall': recall,
+                'f1': f1,
+                'auc': auc
             }
             
             print(f"ERGCN analysis completed successfully")
