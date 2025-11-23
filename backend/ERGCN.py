@@ -1,397 +1,502 @@
-import pandas as pd
+import os
+import warnings
+warnings.filterwarnings('ignore')
+
 import numpy as np
+import pandas as pd
+from io import StringIO
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.data import HeteroData
-from torch_geometric.nn import RGCNConv, global_max_pool
-from sklearn.metrics import classification_report, f1_score, recall_score, roc_auc_score
-import warnings
+from torch_geometric.nn import HeteroConv, SAGEConv, Linear
+
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.metrics import (
+    f1_score, recall_score, roc_auc_score
+)
+
 warnings.filterwarnings('ignore')
 
-# Set random seeds
-torch.manual_seed(42)
-np.random.seed(42)
+DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-class FraudDetectionModel:
-    def __init__(self, model_path="ERGCN_files/training_v12_model.pth"):
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.model_path = model_path
-        self.threshold = 0.5
-        
-        # Required features (already preprocessed in input CSV)
-        self.required_features = [
-            'C14', 'C1', 'V317', 'V308', 'card6', 'V306', 'V126',
-            'C11', 'C6', 'V282', 'TransactionAmt', 'V53', 'card5',
-            'C13', 'V35', 'V280', 'V279', 'card2', 'V258', 'M6',
-            'V90', 'V82', 'C2', 'V87', 'V294', 'C12', 'V313', 'id_06'
-        ]
-        
-        self.numerical_cols = self.required_features
-        self.model = None
-        
+# Set CUDA debugging
+os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 
-    
-    def create_temporal_graphs(self, df):
-        """Create temporal knowledge graphs"""
-        df = df.copy()
-        
-        # Create composite card key
-        df['card_key'] = (
-            df['card2'].astype(str) + '_' +
-            df['card5'].astype(str) + '_' +
-            df['card6'].astype(str)
+# Default model path
+DEFAULT_MODEL_PATH = 'ERGCN_files/ergcn_fraud_model_v1.pt'
+
+"""# ERGCN Model Definition"""
+
+class ERGCN(nn.Module):
+    """
+    Enhanced Relational Graph Convolutional Network with GRU
+    Architecture based on the proposed system with Global and Local Learning Units
+    """
+    def __init__(self, hidden_channels, out_channels, num_transaction_features,
+                 num_card_nodes, num_email_nodes, gru_hidden=64):
+        super().__init__()
+
+        self.hidden_channels = hidden_channels
+        self.gru_hidden = gru_hidden
+        self.num_card_nodes = num_card_nodes
+        self.num_email_nodes = num_email_nodes
+
+        # Transaction node encoder
+        self.transaction_lin = Linear(num_transaction_features, hidden_channels)
+
+        # ===== GLOBAL LEARNING UNIT =====
+        # Double RGCN layers for global learning
+        self.global_conv1 = HeteroConv({
+            ('transaction', 'uses_card', 'card'): SAGEConv(hidden_channels, hidden_channels),
+            ('card', 'used_by', 'transaction'): SAGEConv(hidden_channels, hidden_channels),
+            ('transaction', 'has_email', 'email'): SAGEConv(hidden_channels, hidden_channels),
+            ('email', 'belongs_to', 'transaction'): SAGEConv(hidden_channels, hidden_channels),
+        }, aggr='sum')
+
+        self.global_conv2 = HeteroConv({
+            ('transaction', 'uses_card', 'card'): SAGEConv(hidden_channels, hidden_channels),
+            ('card', 'used_by', 'transaction'): SAGEConv(hidden_channels, hidden_channels),
+            ('transaction', 'has_email', 'email'): SAGEConv(hidden_channels, hidden_channels),
+            ('email', 'belongs_to', 'transaction'): SAGEConv(hidden_channels, hidden_channels),
+        }, aggr='sum')
+
+        # Max pooling for global features
+        self.global_pool = nn.AdaptiveMaxPool1d(1)
+
+        # GRU for global temporal patterns
+        self.global_gru = nn.GRU(
+            input_size=hidden_channels,
+            hidden_size=gru_hidden,
+            num_layers=2,
+            batch_first=True,
+            dropout=0.3
         )
-        
-        # Convert TransactionDT to days
-        df['day'] = df['TransactionDT'] // (24 * 3600)
-        
-        # Get unique entities
-        unique_cards = df['card_key'].unique()
-        unique_emails = df['P_emaildomain'].unique()
-        
-        card_to_idx = {card: idx for idx, card in enumerate(unique_cards)}
-        email_to_idx = {email: idx for idx, email in enumerate(unique_emails)}
-        
-        # Map indices
-        df['card_idx'] = df['card_key'].map(card_to_idx)
-        df['email_idx'] = df['P_emaildomain'].map(email_to_idx)
-        
-        # Split by day
-        days = sorted(df['day'].unique())
-        temporal_graphs = []
-        
-        for day in days:
-            day_df = df[df['day'] == day].copy()
-            
-            # Create HeteroData object
-            data = HeteroData()
-            
-            # Transaction features
-            transaction_features = torch.tensor(
-                day_df[self.numerical_cols].fillna(0).values,
-                dtype=torch.float
-            )
-            data['transaction'].x = transaction_features
-            data['transaction'].y = torch.tensor(day_df['isFraud'].values, dtype=torch.float)
-            data['transaction'].transaction_id = torch.tensor(
-                day_df['TransactionID'].values, dtype=torch.long
-            )
-            
-            # Card and email nodes
-            data['card'].num_nodes = len(unique_cards)
-            data['email'].num_nodes = len(unique_emails)
-            
-            # Create edges
-            num_transactions = len(day_df)
-            transaction_indices = torch.arange(num_transactions)
-            card_indices = torch.tensor(day_df['card_idx'].values, dtype=torch.long)
-            email_indices = torch.tensor(day_df['email_idx'].values, dtype=torch.long)
-            
-            # Edge relationships
-            data['transaction', 'uses_card', 'card'].edge_index = torch.stack([
-                transaction_indices, card_indices
-            ], dim=0)
-            
-            data['transaction', 'has_email', 'email'].edge_index = torch.stack([
-                transaction_indices, email_indices
-            ], dim=0)
-            
-            data['card', 'used_by', 'transaction'].edge_index = torch.stack([
-                card_indices, transaction_indices
-            ], dim=0)
-            
-            data['email', 'belongs_to', 'transaction'].edge_index = torch.stack([
-                email_indices, transaction_indices
-            ], dim=0)
-            
-            data.day = day
-            data.num_transactions = num_transactions
-            
-            temporal_graphs.append(data)
-        
-        return temporal_graphs, len(unique_cards), len(unique_emails)
+
+        # Global feature projection
+        self.global_fc = Linear(gru_hidden, hidden_channels // 2)
+
+        # ===== LOCAL LEARNING UNIT =====
+        # Single RGCN layer for local learning
+        self.local_conv = HeteroConv({
+            ('transaction', 'uses_card', 'card'): SAGEConv(hidden_channels, hidden_channels),
+            ('card', 'used_by', 'transaction'): SAGEConv(hidden_channels, hidden_channels),
+            ('transaction', 'has_email', 'email'): SAGEConv(hidden_channels, hidden_channels),
+            ('email', 'belongs_to', 'transaction'): SAGEConv(hidden_channels, hidden_channels),
+        }, aggr='sum')
+
+        # GRU for local temporal patterns
+        self.local_gru = nn.GRU(
+            input_size=hidden_channels,
+            hidden_size=gru_hidden,
+            num_layers=1,
+            batch_first=True,
+            dropout=0.3
+        )
+
+        # Local feature projection
+        self.local_fc = Linear(gru_hidden, hidden_channels // 2)
+
+        # ===== OUTPUT LAYER =====
+        # Combine global and local features
+        self.combine_fc1 = Linear(hidden_channels, hidden_channels // 2)
+        self.combine_fc2 = Linear(hidden_channels // 2, out_channels)
+
+        # Dropout and batch norm
+        self.dropout = nn.Dropout(0.5)
+        self.bn_global = nn.BatchNorm1d(hidden_channels)
+        self.bn_local = nn.BatchNorm1d(hidden_channels)
+        self.bn_combine = nn.BatchNorm1d(hidden_channels // 2)
+
+    def forward(self, x_dict, edge_index_dict):
+        # Encode transaction features
+        x_dict['transaction'] = self.transaction_lin(x_dict['transaction'])
+
+        # Initialize card and email features with proper dimensions
+        device = x_dict['transaction'].device
+        x_dict['card'] = torch.zeros(
+            (self.num_card_nodes, self.hidden_channels),
+            device=device
+        )
+        x_dict['email'] = torch.zeros(
+            (self.num_email_nodes, self.hidden_channels),
+            device=device
+        )
+
+        # ===== GLOBAL LEARNING PATH =====
+        # First global conv
+        global_x_dict = {k: v.clone() for k, v in x_dict.items()}
+        global_x_dict = self.global_conv1(global_x_dict, edge_index_dict)
+        global_x_dict = {key: F.relu(x) for key, x in global_x_dict.items()}
+        global_x_dict = {key: self.dropout(x) for key, x in global_x_dict.items()}
+
+        # Second global conv
+        global_x_dict = self.global_conv2(global_x_dict, edge_index_dict)
+        global_x_dict = {key: F.relu(x) for key, x in global_x_dict.items()}
+
+        # Get transaction embeddings and apply batch norm
+        global_trans = global_x_dict['transaction']
+        global_trans = self.bn_global(global_trans)
+
+        # Reshape for GRU: (batch, seq_len=1, features)
+        global_trans_seq = global_trans.unsqueeze(1)
+
+        # Apply GRU
+        global_gru_out, _ = self.global_gru(global_trans_seq)
+        global_gru_out = global_gru_out[:, -1, :]  # Take last output
+
+        # Project global features
+        global_features = self.global_fc(global_gru_out)
+        global_features = F.relu(global_features)
+        global_features = self.dropout(global_features)
+
+        # ===== LOCAL LEARNING PATH =====
+        # Local conv
+        local_x_dict = {k: v.clone() for k, v in x_dict.items()}
+        local_x_dict = self.local_conv(local_x_dict, edge_index_dict)
+        local_x_dict = {key: F.relu(x) for key, x in local_x_dict.items()}
+
+        # Get transaction embeddings and apply batch norm
+        local_trans = local_x_dict['transaction']
+        local_trans = self.bn_local(local_trans)
+
+        # Reshape for GRU
+        local_trans_seq = local_trans.unsqueeze(1)
+
+        # Apply GRU
+        local_gru_out, _ = self.local_gru(local_trans_seq)
+        local_gru_out = local_gru_out[:, -1, :]
+
+        # Project local features
+        local_features = self.local_fc(local_gru_out)
+        local_features = F.relu(local_features)
+        local_features = self.dropout(local_features)
+
+        # ===== COMBINE AND CLASSIFY =====
+        # Concatenate global and local features
+        combined = torch.cat([global_features, local_features], dim=1)
+
+        # Final classification layers
+        combined = self.combine_fc1(combined)
+        combined = self.bn_combine(combined)
+        combined = F.relu(combined)
+        combined = self.dropout(combined)
+
+        out = self.combine_fc2(combined)
+
+        return out.squeeze(-1)
+
+# Define loss function
+criterion = nn.BCEWithLogitsLoss()
+
+@torch.no_grad()
+def evaluate(model, data, mask):
+    """Evaluate model on given data and mask"""
+    model.eval()
+
+    out = model(data.x_dict, data.edge_index_dict)
+
+    # Get predictions for the specified mask
+    logits = out[mask]
+    labels = data['transaction'].y[mask]
+
+    # Loss
+    loss = criterion(logits, labels).item()
+
+    # Convert to probabilities
+    probs = torch.sigmoid(logits).cpu().numpy()
+    labels_np = labels.cpu().numpy()
+
+    # Predictions (threshold 0.5 as specified)
+    preds = (probs >= 0.5).astype(int)
+
+    # Metrics
+    f1 = f1_score(labels_np, preds)
+    recall = recall_score(labels_np, preds)
+
+    # AUC (only if both classes present)
+    if len(np.unique(labels_np)) > 1:
+        auc_score = roc_auc_score(labels_np, probs)
+    else:
+        auc_score = 0.0
+
+    return loss, f1, recall, auc_score, probs, preds, labels_np
+
+def analyze_transactions(csv_data: str, model_path: str = DEFAULT_MODEL_PATH):
+    """
+    Analyze transactions using ERGCN model.
     
-    def load_model(self, num_cards, num_emails):
-        """Load the trained model"""
-        checkpoint = torch.load(self.model_path, map_location=self.device)
+    Args:
+        csv_data: CSV data as string containing transaction data
+        model_path: Path to the trained model file
         
-        # Extract original dimensions from checkpoint
-        original_num_cards = checkpoint['card_embedding.weight'].shape[0]
-        original_num_emails = checkpoint['email_embedding.weight'].shape[0]
-        
-        self.model = TemporalFraudDetector(
-            in_channels=len(self.numerical_cols),
-            hidden_dim=64,
-            gru_hidden_dim=32,
-            num_cards=original_num_cards,
-            num_emails=original_num_emails,
-            dropout_rate=0.5
-        ).to(self.device)
-        
-        self.model.load_state_dict(checkpoint)
-        self.model.eval()
+    Returns:
+        Dictionary containing predictions and metrics
+    """
+    print(f"Using device: {DEVICE}")
     
-    def predict(self, csv_file_path):
-        """Complete prediction pipeline"""
-        print(f"Loading data from {csv_file_path}...")
-        
-        # Load CSV (already preprocessed)
-        df = pd.read_csv(csv_file_path)
-        
-        # Create temporal graphs
-        print("Creating temporal knowledge graphs...")
-        temporal_graphs, num_cards, num_emails = self.create_temporal_graphs(df)
-        
-        # Load model
-        print("Loading trained model...")
-        self.load_model(num_cards, num_emails)
-        
-        # Make predictions
-        print("Making predictions...")
-        with torch.no_grad():
-            predictions, labels = self.model(temporal_graphs)
-            
-            # Convert to binary predictions
-            preds_binary = (predictions > self.threshold).float()
-            raw_scores = predictions.cpu().numpy()
-            binary_preds = preds_binary.cpu().numpy()
-            true_labels = labels.cpu().numpy()
-        
-        # Create results table
-        results_df = pd.DataFrame({
-            'TransactionID': df['TransactionID'].values,
-            'True_Label': true_labels,
-            'Predicted_Label': binary_preds,
-            'Raw_Score': raw_scores,
-            'Is_Fraud_Predicted': binary_preds.astype(bool),
-            'Prediction_Correct': (binary_preds == true_labels).astype(bool)
-        })
-        
-        # Print summary
-        accuracy = (binary_preds == true_labels).mean()
-        print(f"\nPrediction Summary:")
-        print(f"Total transactions: {len(results_df)}")
-        print(f"Predicted fraud: {binary_preds.sum()}")
-        print(f"Actual fraud: {true_labels.sum()}")
-        print(f"Accuracy: {accuracy:.4f}")
-        
-        # Calculate metrics
-        f1 = f1_score(true_labels, binary_preds)
-        recall = recall_score(true_labels, binary_preds)
-        
-        # AUC (only if both classes present)
-        if len(np.unique(true_labels)) > 1:
-            auc_score = roc_auc_score(true_labels, raw_scores)
+    # Load CSV data from string
+    df = pd.read_csv(StringIO(csv_data))
+    print(f"Data Shape: {df.shape}")
+    
+    # Identify column types
+    feature_cols = [col for col in df.columns if col not in ['TransactionID', 'isFraud', 'TrueLabel']]
+    categorical_cols = [col for col in feature_cols if df[col].dtype == 'object']
+    numerical_cols = [col for col in feature_cols if df[col].dtype != 'object']
+    
+    print(f"Numerical columns ({len(numerical_cols)}): {numerical_cols[:5]}...")
+    print(f"Categorical columns ({len(categorical_cols)}): {categorical_cols}")
+    
+    # Fill Missing Values (using training medians/modes)
+    col_medians = df[numerical_cols].median()
+    for col in numerical_cols:
+        df[col].fillna(col_medians[col], inplace=True)
+    
+    for col in categorical_cols:
+        mode_val = df[col].mode()
+        if len(mode_val) > 0:
+            df[col].fillna(mode_val[0], inplace=True)
         else:
-            auc_score = 0.0
-        
-        print(f"F1 Score: {f1:.4f}")
-        print(f"Recall: {recall:.4f}")
-        print(f"AUC: {auc_score:.4f}")
-        
-        # Print classification report if we have both classes
-        if len(np.unique(true_labels)) > 1:
-            print("\nClassification Report:")
-            print(classification_report(true_labels, binary_preds, 
-                                      target_names=['Legitimate', 'Fraud']))
-        
-        return results_df
-
-
-# Model architecture classes (from Training_v12)
-class GlobalLearningUnit(nn.Module):
-    def __init__(self, in_channels, hidden_dim, gru_hidden_dim, num_relations, dropout_rate=0.5):
-        super(GlobalLearningUnit, self).__init__()
-        self.hidden_dim = hidden_dim
-        self.gru_hidden_dim = gru_hidden_dim
-        self.dropout_rate = dropout_rate
-        
-        self.rgcn1 = RGCNConv(in_channels, hidden_dim, num_relations)
-        self.rgcn2 = RGCNConv(hidden_dim, hidden_dim, num_relations)
-        self.dropout1 = nn.Dropout(dropout_rate)
-        self.dropout2 = nn.Dropout(dropout_rate)
-        
-        self.gru = nn.GRU(hidden_dim, gru_hidden_dim, batch_first=True, dropout=dropout_rate if dropout_rate > 0 else 0)
-        
-        self.fc = nn.Linear(gru_hidden_dim, hidden_dim)
-        self.dropout_fc = nn.Dropout(dropout_rate)
-        
-    def forward(self, x, edge_index, edge_type, batch):
-        x = F.relu(self.rgcn1(x, edge_index, edge_type))
-        x = self.dropout1(x)
-        x = F.relu(self.rgcn2(x, edge_index, edge_type))
-        x = self.dropout2(x)
-        
-        x_pooled = global_max_pool(x, batch)
-        
-        return x, x_pooled
+            df[col].fillna('missing', inplace=True)
     
-    def temporal_forward(self, pooled_sequence, hidden=None):
-        gru_out, hidden = self.gru(pooled_sequence, hidden)
-        global_feature = self.fc(gru_out)
-        global_feature = self.dropout_fc(global_feature)
-        
-        return global_feature, hidden
-
-
-class LocalLearningUnit(nn.Module):
-    def __init__(self, in_channels, hidden_dim, gru_hidden_dim, num_relations, dropout_rate=0.5):
-        super(LocalLearningUnit, self).__init__()
-        self.hidden_dim = hidden_dim
-        self.gru_hidden_dim = gru_hidden_dim
-        self.dropout_rate = dropout_rate
-        
-        self.rgcn = RGCNConv(in_channels, hidden_dim, num_relations)
-        self.dropout = nn.Dropout(dropout_rate)
-        
-        self.gru = nn.GRU(hidden_dim, gru_hidden_dim, batch_first=True, dropout=dropout_rate if dropout_rate > 0 else 0)
-        
-        self.fc = nn.Linear(gru_hidden_dim, hidden_dim)
-        self.dropout_fc = nn.Dropout(dropout_rate)
-        
-    def forward(self, x, edge_index, edge_type):
-        x = F.relu(self.rgcn(x, edge_index, edge_type))
-        x = self.dropout(x)
-        
-        return x
+    print("Missing values filled using pre-calculated statistics.")
     
-    def temporal_forward(self, node_sequence, hidden=None):
-        gru_out, hidden = self.gru(node_sequence, hidden)
-        local_feature = self.fc(gru_out)
-        local_feature = self.dropout_fc(local_feature)
-        
-        return local_feature, hidden
-
-
-class TemporalFraudDetector(nn.Module):
-    def __init__(self, in_channels, hidden_dim, gru_hidden_dim, num_cards, num_emails, dropout_rate=0.5):
-        super(TemporalFraudDetector, self).__init__()
-        self.hidden_dim = hidden_dim
-        self.num_cards = num_cards
-        self.num_emails = num_emails
-        
-        self.card_embedding = nn.Embedding(num_cards, in_channels)
-        self.email_embedding = nn.Embedding(num_emails, in_channels)
-        
-        self.glu = GlobalLearningUnit(in_channels, hidden_dim, gru_hidden_dim, num_relations=4, dropout_rate=dropout_rate)
-        self.llu = LocalLearningUnit(in_channels, hidden_dim, gru_hidden_dim, num_relations=4, dropout_rate=dropout_rate)
-        
-        self.fc_final = nn.Linear(hidden_dim * 2, 1)
-        self.dropout_final = nn.Dropout(dropout_rate)
-        
-    def forward(self, temporal_graphs, batch_size=7):
-        device = next(self.parameters()).device
-        
-        all_predictions = []
-        all_labels = []
-        
-        for i in range(0, len(temporal_graphs), batch_size):
-            batch_graphs = temporal_graphs[i:i+batch_size]
-            batch_preds, batch_labels = self._forward_batch(batch_graphs)
-            all_predictions.append(batch_preds)
-            all_labels.append(batch_labels)
-        
-        return torch.cat(all_predictions), torch.cat(all_labels)
+    # Label Encode Categorical Features
+    label_encoders = {}
+    for col in categorical_cols:
+        le = LabelEncoder()
+        df[col] = df[col].astype(str)
+        df[col] = le.fit_transform(df[col])
+        label_encoders[col] = le
     
-    def _forward_batch(self, temporal_graphs):
-        device = next(self.parameters()).device
-        
-        global_pooled_features = []
-        local_node_features_list = []
-        transaction_counts = []
-        all_labels = []
-        
-        for t, graph in enumerate(temporal_graphs):
-            graph = graph.to(device)
-            
-            trans_x = graph['transaction'].x
-            num_trans = trans_x.shape[0]
-            transaction_counts.append(num_trans)
-            all_labels.append(graph['transaction'].y)
-            
-            card_x = self.card_embedding(torch.arange(self.num_cards, device=device))
-            email_x = self.email_embedding(torch.arange(self.num_emails, device=device))
-            
-            x_dict = {
-                'transaction': trans_x,
-                'card': card_x,
-                'email': email_x
-            }
-            
-            edge_index_list = []
-            edge_type_list = []
-            
-            uses_card_edges = graph['transaction', 'uses_card', 'card'].edge_index
-            edge_index_list.append(uses_card_edges + torch.tensor([[0], [num_trans]], device=device))
-            edge_type_list.append(torch.zeros(uses_card_edges.shape[1], dtype=torch.long, device=device))
-            
-            has_email_edges = graph['transaction', 'has_email', 'email'].edge_index
-            edge_index_list.append(has_email_edges + torch.tensor([[0], [num_trans + self.num_cards]], device=device))
-            edge_type_list.append(torch.ones(has_email_edges.shape[1], dtype=torch.long, device=device))
-            
-            used_by_edges = graph['card', 'used_by', 'transaction'].edge_index
-            edge_index_list.append(used_by_edges + torch.tensor([[num_trans], [0]], device=device))
-            edge_type_list.append(torch.full((used_by_edges.shape[1],), 2, dtype=torch.long, device=device))
-            
-            belongs_to_edges = graph['email', 'belongs_to', 'transaction'].edge_index
-            edge_index_list.append(belongs_to_edges + torch.tensor([[num_trans + self.num_cards], [0]], device=device))
-            edge_type_list.append(torch.full((belongs_to_edges.shape[1],), 3, dtype=torch.long, device=device))
-            
-            edge_index = torch.cat(edge_index_list, dim=1)
-            edge_type = torch.cat(edge_type_list)
-            
-            x_all = torch.cat([trans_x, card_x, email_x], dim=0)
-            
-            total_nodes = num_trans + self.num_cards + self.num_emails
-            batch = torch.zeros(total_nodes, dtype=torch.long, device=device)
-            
-            glu_node_features, glu_pooled = self.glu(x_all, edge_index, edge_type, batch)
-            global_pooled_features.append(glu_pooled.unsqueeze(0))
-            
-            llu_node_features = self.llu(x_all, edge_index, edge_type)
-            llu_trans_features = llu_node_features[:num_trans]
-            local_node_features_list.append(llu_trans_features)
-        
-        # Process temporal sequences
-        global_pooled_seq = torch.cat([f.squeeze(0) for f in global_pooled_features], dim=0)
-        global_pooled_seq = global_pooled_seq.unsqueeze(0)
-        global_fraud_features, _ = self.glu.temporal_forward(global_pooled_seq)
-        global_fraud_features = global_fraud_features.squeeze(0)
-        
-        expanded_global_features = []
-        for t, count in enumerate(transaction_counts):
-            expanded_global_features.append(global_fraud_features[t].unsqueeze(0).expand(count, -1))
-        expanded_global_features = torch.cat(expanded_global_features, dim=0)
-        
-        local_fraud_features_list = []
-        for feats in local_node_features_list:
-            local_seq = feats.unsqueeze(1)
-            local_out, _ = self.llu.temporal_forward(local_seq)
-            local_fraud_features_list.append(local_out.squeeze(1))
-        
-        local_fraud_features = torch.cat(local_fraud_features_list, dim=0)
-        
-        combined_features = torch.cat([expanded_global_features, local_fraud_features], dim=1)
-        combined_features = self.dropout_final(combined_features)
-        
-        logits = self.fc_final(combined_features)
-        predictions = torch.sigmoid(logits).squeeze(1)
-        
-        labels = torch.cat(all_labels, dim=0)
-        
-        return predictions, labels
-
+    print("Categorical encoding complete")
+    
+    # Scale Numerical Features
+    scaler = StandardScaler()
+    scaler.fit(df[numerical_cols])
+    df[numerical_cols] = scaler.transform(df[numerical_cols])
+    
+    print("Numerical scaling complete")
+    
+    """# Graph Construction"""
+    
+    print("\n" + "="*80)
+    print("GRAPH CONSTRUCTION")
+    print("="*80)
+    
+    transaction_feature_cols = numerical_cols
+    print(f"Transaction node features ({len(transaction_feature_cols)} features)")
+    
+    # Create composite card key (card2_card5_card6)
+    df['card_key'] = (
+        df['card2'].astype(str) + '_' +
+        df['card5'].astype(str) + '_' +
+        df['card6'].astype(str)
+    )
+    
+    # Create unique node mappings
+    unique_cards = df['card_key'].unique()
+    unique_emails = df['P_emaildomain'].unique()
+    
+    card_to_idx = {card: idx for idx, card in enumerate(unique_cards)}
+    email_to_idx = {email: idx for idx, email in enumerate(unique_emails)}
+    
+    print(f"\nGraph statistics:")
+    print(f"  Transaction nodes: {len(df)}")
+    print(f"  Card nodes: {len(unique_cards)}")
+    print(f"  Email nodes: {len(unique_emails)}")
+    
+    # Map to indices
+    df['card_idx'] = df['card_key'].map(card_to_idx)
+    df['email_idx'] = df['P_emaildomain'].map(email_to_idx)
+    
+    # Create HeteroData object
+    data = HeteroData()
+    
+    # Transaction node features
+    transaction_features = torch.tensor(
+        df[transaction_feature_cols].values,
+        dtype=torch.float
+    )
+    data['transaction'].x = transaction_features
+    
+    # Handle ground truth labels - use zeros if isFraud contains NaN
+    if 'isFraud' in df.columns and not df['isFraud'].isna().all():
+        labels = df['isFraud'].fillna(0).values  # Fill NaN with 0 for safety
+    else:
+        labels = np.zeros(len(df))  # No ground truth available
+    
+    data['transaction'].y = torch.tensor(labels, dtype=torch.float)
+    data['transaction'].transaction_id = torch.tensor(df['TransactionID'].values, dtype=torch.long)
+    
+    print(f"Transaction features shape: {data['transaction'].x.shape}")
+    
+    # Card and Email nodes
+    num_card_nodes = len(unique_cards)
+    num_email_nodes = len(unique_emails)
+    data['card'].num_nodes = num_card_nodes
+    data['email'].num_nodes = num_email_nodes
+    
+    # Create edges: (transaction, uses_card, card)
+    transaction_indices = torch.arange(len(df))
+    card_indices = torch.tensor(df['card_idx'].values, dtype=torch.long)
+    
+    data['transaction', 'uses_card', 'card'].edge_index = torch.stack([
+        transaction_indices,
+        card_indices
+    ], dim=0)
+    
+    # Create edges: (transaction, has_email, email)
+    email_indices = torch.tensor(df['email_idx'].values, dtype=torch.long)
+    
+    data['transaction', 'has_email', 'email'].edge_index = torch.stack([
+        transaction_indices,
+        email_indices
+    ], dim=0)
+    
+    # Reverse edges for message passing
+    data['card', 'used_by', 'transaction'].edge_index = torch.stack([
+        card_indices,
+        transaction_indices
+    ], dim=0)
+    
+    data['email', 'belongs_to', 'transaction'].edge_index = torch.stack([
+        email_indices,
+        transaction_indices
+    ], dim=0)
+    
+    print(f"\nEdge statistics:")
+    print(f"  (transaction, uses_card, card): {data['transaction', 'uses_card', 'card'].edge_index.shape[1]} edges")
+    print(f"  (transaction, has_email, email): {data['transaction', 'has_email', 'email'].edge_index.shape[1]} edges")
+    print(f"  (card, used_by, transaction): {data['card', 'used_by', 'transaction'].edge_index.shape[1]} edges")
+    print(f"  (email, belongs_to, transaction): {data['email', 'belongs_to', 'transaction'].edge_index.shape[1]} edges")
+    
+    """# Model Initialization"""
+    
+    print("\n" + "="*80)
+    print("MODEL ARCHITECTURE")
+    print("="*80)
+    
+    # Initialize model
+    model = ERGCN(
+        hidden_channels=128,
+        out_channels=1,
+        num_transaction_features=len(transaction_feature_cols),
+        num_card_nodes=num_card_nodes,
+        num_email_nodes=num_email_nodes,
+        gru_hidden=64
+    ).to(DEVICE)
+    
+    print(f"Model initialized with {sum(p.numel() for p in model.parameters()):,} parameters")
+    
+    """# Load Pre-trained Model"""
+    
+    print("\n" + "="*80)
+    print("LOADING PRE-TRAINED MODEL")
+    print("="*80)
+    
+    # Load model weights
+    model.load_state_dict(torch.load(model_path, map_location=DEVICE))
+    model.eval()
+    print("Pre-trained model weights loaded successfully.")
+    
+    """# Inference"""
+    
+    print("\n" + "="*80)
+    print("RUNNING INFERENCE")
+    print("="*80)
+    
+    # Move data to device
+    data = data.to(DEVICE)
+    
+    # Create a mask to evaluate all transactions in the input data
+    n_total = data['transaction'].num_nodes
+    all_nodes_mask = torch.ones(n_total, dtype=torch.bool, device=DEVICE)
+    data['transaction'].test_mask = all_nodes_mask
+    
+    # Run evaluation
+    test_loss, test_f1, test_recall, test_auc, test_probs, test_preds, test_labels = evaluate(
+        model, data, data['transaction'].test_mask
+    )
+    
+    print('Threshold at 0.5')
+    print('Test Probabilities (first 10):')
+    print(test_probs[:10])
+    print('Test Predictions (first 10):')
+    print(test_preds[:10])
+    
+    print("\nPredictions generated for all nodes in the input data.")
+    
+    # Create results DataFrame
+    predictions_df = pd.DataFrame({
+        'TransactionID': data['transaction'].transaction_id.cpu().numpy(),
+        'Actual_isFraud': test_labels.astype(int),
+        'Predicted_isFraud': test_preds,
+        'Fraud_Probability': test_probs
+    })
+    
+    # Return results in the format expected by the API
+    results = {
+        'transactions': predictions_df.to_dict('records'),
+        'metrics': {
+            'loss': test_loss,
+            'f1': test_f1,
+            'recall': test_recall,
+            'auc': test_auc
+        },
+        'summary': {
+            'total_transactions': len(predictions_df),
+            'fraud_detected_by_ERGCN': sum(test_preds),
+            'legitimate_detected_by_ERGCN': len(test_preds) - sum(test_preds),
+            'fraud_rate': (sum(test_labels) / len(test_labels)) * 100 if len(test_labels) > 0 else 0
+        }
+    }
+    
+    return results
 
 if __name__ == "__main__":
-    import time
-    start_time = time.time()
-    fraud_detector = FraudDetectionModel()
-    results = fraud_detector.predict("ERGCN_files/demo.csv")
-    end_time = time.time()
-    elapsed = end_time - start_time
-    print(f"\nTime taken: {elapsed:.4f} seconds")
-
-    print("\n", results.head(20))
-    # results.to_csv("fraud_predictions.csv", index=False)
-    # print("\nSaved to 'fraud_predictions.csv'")
+    # Standalone execution for testing
+    CSV_PATH = 'ERGCN_files/merged_demo.csv'
+    MODEL_PATH = 'ERGCN_files/ergcn_fraud_model_v1.pt'
+    
+    print("\n" + "="*80)
+    print("STANDALONE ERGCN MODEL EXECUTION")
+    print("="*80)
+    
+    # Load demo data
+    with open(CSV_PATH, 'r') as f:
+        demo_csv = f.read()
+    
+    # Run analysis
+    results = analyze_transactions(demo_csv, MODEL_PATH)
+    
+    # Print results
+    metrics = results.get("metrics", {})
+    f1 = metrics.get("f1")
+    recall = metrics.get("recall")
+    auc = metrics.get("auc")
+    loss = metrics.get("loss")
+    
+    print("\n" + "="*80)
+    print("EVALUATION RESULTS")
+    print("="*80)
+    print(f"Performance Metrics:")
+    print(f"  Loss:   {loss:.5f}")
+    print(f"  F1:     {f1:.5f}")
+    print(f"  Recall: {recall:.5f}")
+    print(f"  AUC:    {auc:.5f}")
+    
+    summary = results.get("summary", {})
+    print(f"\nSummary:")
+    print(f"  Total transactions: {summary.get('total_transactions', 0)}")
+    print(f"  Fraud detected: {summary.get('fraud_detected_by_ERGCN', 0)}")
+    print(f"  Legitimate detected: {summary.get('legitimate_detected_by_ERGCN', 0)}")
+    print(f"  Fraud rate: {summary.get('fraud_rate', 0):.2f}%")
+    
+    # transactions = results.get("transactions", [])
+    # if transactions:
+    #     print(f"\nFirst 10 predictions:")
+    #     for i, tx in enumerate(transactions[:10]):
+    #         print(f"  TransactionID {tx['TransactionID']}: Predicted={tx['Predicted_isFraud']}, "
+    #               f"Probability={tx['Fraud_Probability']:.4f}, Actual={tx['Actual_isFraud']}")

@@ -1,5 +1,5 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Dict, Any
@@ -7,12 +7,9 @@ import uvicorn
 import pandas as pd
 from io import StringIO
 
-from basemodels import AnalysisResult, TransactionBatch
-from RGCN import analyze_transactions
-from model import FraudDetectionModel
-from sklearn.metrics import recall_score, f1_score, roc_auc_score
-import tempfile
-import os
+from basemodels import AnalysisResult
+from RGCN import analyze_transactions as analyze_transactions_rgcn
+from ERGCN import analyze_transactions as analyze_transactions_ergcn
 
 app = FastAPI(title="Credsight API")
 
@@ -67,80 +64,48 @@ async def explain_transaction(transaction_id: int, model_type: str = "both"):
         raise HTTPException(status_code=500, detail=f"Explanation failed: {str(e)}")
 
 @app.post("/analyze", response_model=AnalysisResult)
-async def analyze_transactions_endpoint(batch: TransactionBatch):
+async def analyze_transactions_endpoint(file: UploadFile = File(...)):
     """
-    Analyze transactions using RGCN model.
-    This serves as a gateway for model inference - accepts transaction data from frontend,
-    converts it to CSV format, passes to RGCN.py for processing, and returns predictions.
-    ERGCN will be implemented SOON.
+    Analyze transactions using RGCN and ERGCN models.
+    Accepts CSV file directly from frontend - no transformation needed.
+    This eliminates the double transformation issue (CSV -> JSON -> CSV).
     """
     try:
-        # Validate input
-        if not batch.transactions:
-            raise HTTPException(status_code=400, detail="No transactions provided")
+        # Validate file type
+        if not file.filename.endswith('.csv'):
+            raise HTTPException(status_code=400, detail="File must be a CSV file")
         
-        # Convert TransactionBatch to CSV format
-        transactions_data = []
-        for transaction in batch.transactions:
-            # Use all attributes from the transaction object
-            tx_dict = transaction.dict()
-            transactions_data.append(tx_dict)
+        # Read CSV content directly
+        contents = await file.read()
+        csv_data = contents.decode('utf-8')
         
-        # Convert to DataFrame and then to CSV string
-        df = pd.DataFrame(transactions_data)
-        print(f"Received columns: {list(df.columns)}")
-        csv_data = df.to_csv(index=False)
+        print("\n" + "="*80)
+        print("RECEIVED CSV FILE")
+        print("="*80)
+        print(f"Filename: {file.filename}")
+        print(f"CSV data length: {len(csv_data)} characters")
+        print(f"CSV first 500 chars: {csv_data[:500]}")
         
-        print(f"Processing {len(batch.transactions)} transactions with RGCN and ERGCN models...")
+        # Quick validation - check if CSV has data
+        lines = csv_data.strip().split('\n')
+        if len(lines) < 2:
+            raise HTTPException(status_code=400, detail="CSV file must contain at least a header and one data row")
+        
+        print(f"CSV rows: {len(lines)} (including header)")
+        print(f"Expected data rows: {len(lines) - 1}")
         
         # Call RGCN analysis function
-        rgcn_results = analyze_transactions(csv_data)
+        print("\n" + "="*80)
+        print("CALLING RGCN MODEL")
+        print("="*80)
+        rgcn_results = analyze_transactions_rgcn(csv_data)
         
-        # Call FraudDetectionModel
+        # Call ERGCN analysis function
+        print("\n" + "="*80)
+        print("CALLING ERGCN MODEL")
+        print("="*80)
         try:
-            # Save CSV to temp file for model
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False, newline='') as tmp:
-                tmp.write(csv_data)
-                tmp_path = tmp.name
-            
-            # Initialize and run model
-            detector = FraudDetectionModel(model_path="ERGCN_files/training_v12_model.pth")
-            results_df = detector.predict(tmp_path)
-            
-            # Clean up temp file
-            os.unlink(tmp_path)
-            
-            # Convert model results to expected format
-            ergcn_results = {
-                'transactions': [],
-                'metrics': {}
-            }
-            
-            for _, row in results_df.iterrows():
-                ergcn_results['transactions'].append({
-                    'TransactionID': row['TransactionID'],
-                    'Predicted_isFraud': int(row['Predicted_Label']),
-                    'Fraud_Probability': float(row['Raw_Score'])
-                })
-            
-            # Calculate metrics
-            true_labels = results_df['True_Label'].values
-            predicted_labels = results_df['Predicted_Label'].values
-            raw_scores = results_df['Raw_Score'].values
-            
-            recall = float(recall_score(true_labels, predicted_labels, zero_division=0))
-            f1 = float(f1_score(true_labels, predicted_labels, zero_division=0))
-            if len(set(true_labels)) > 1:
-                auc = float(roc_auc_score(true_labels, raw_scores))
-            else:
-                auc = None
-            
-            ergcn_results['metrics'] = {
-                'recall': recall,
-                'f1': f1,
-                'auc': auc
-            }
-            
+            ergcn_results = analyze_transactions_ergcn(csv_data)
             print(f"ERGCN analysis completed successfully")
         except Exception as e:
             print(f"ERGCN analysis failed: {e}")
@@ -158,7 +123,17 @@ async def analyze_transactions_endpoint(batch: TransactionBatch):
         
         # Convert results to the expected API format
         processed_transactions = []
-        for i, rgcn_result in enumerate(rgcn_results['transactions']):
+        skipped_count = 0
+        
+        # Ensure both results have the same length
+        min_length = min(len(rgcn_results['transactions']), len(ergcn_results['transactions']))
+        max_length = max(len(rgcn_results['transactions']), len(ergcn_results['transactions']))
+        
+        if min_length != max_length:
+            print(f"WARNING: Result length mismatch - RGCN: {len(rgcn_results['transactions'])}, ERGCN: {len(ergcn_results['transactions'])}")
+        
+        for i in range(min_length):
+            rgcn_result = rgcn_results['transactions'][i]
             # Get corresponding ERGCN result
             ergcn_result = ergcn_results['transactions'][i] if i < len(ergcn_results['transactions']) else {
                 'Predicted_isFraud': 0, 'Fraud_Probability': 0.0
@@ -166,45 +141,75 @@ async def analyze_transactions_endpoint(batch: TransactionBatch):
             
             # Handle both protocols: with and without ground truth
             true_label = None
-            if rgcn_result['Actual_isFraud'] is not None and not pd.isna(rgcn_result['Actual_isFraud']):
+            if rgcn_result.get('Actual_isFraud') is not None and not pd.isna(rgcn_result.get('Actual_isFraud')):
                 true_label = int(rgcn_result['Actual_isFraud'])
             
-            # Handle NaN TransactionID
-            transaction_id = rgcn_result['TransactionID']
-            if pd.isna(transaction_id):
+            # Handle NaN TransactionID - convert to int safely
+            transaction_id = rgcn_result.get('TransactionID')
+            if transaction_id is None or pd.isna(transaction_id):
+                skipped_count += 1
+                print(f"WARNING: Skipping transaction at index {i} due to missing TransactionID")
                 continue  # Skip rows with missing TransactionID
             
+            try:
+                transaction_id = int(transaction_id)
+            except (ValueError, TypeError):
+                skipped_count += 1
+                print(f"WARNING: Skipping transaction at index {i} due to invalid TransactionID: {transaction_id}")
+                continue
+            
             processed_transactions.append({
-                "TransactionID": int(transaction_id),
+                "TransactionID": transaction_id,
                 "TrueLabel": true_label,
-                "RGCN_Prediction": int(rgcn_result['Predicted_isFraud']),
-                "RGCN_Confidence": float(rgcn_result['Fraud_Probability']),
-                "ERGCN_Prediction": int(ergcn_result['Predicted_isFraud']),
-                "ERGCN_Confidence": float(ergcn_result['Fraud_Probability'])
+                "RGCN_Prediction": int(rgcn_result.get('Predicted_isFraud', 0)),
+                "RGCN_Confidence": float(rgcn_result.get('Fraud_Probability', 0.0)),
+                "ERGCN_Prediction": int(ergcn_result.get('Predicted_isFraud', 0)),
+                "ERGCN_Confidence": float(ergcn_result.get('Fraud_Probability', 0.0))
             })
+        
+        if skipped_count > 0:
+            print(f"WARNING: Skipped {skipped_count} transactions due to missing/invalid TransactionID")
+            print(f"Processed {len(processed_transactions)} transactions out of {min_length} total results")
         
         # Prepare final response
         # Handle None metrics for no ground truth cases
         rgcn_metrics = rgcn_results['metrics']
         ergcn_metrics = ergcn_results['metrics']
         
-        # Calculate ERGCN summary statistics
+        # IMPORTANT: Use metrics from model results (calculated on ALL input data)
+        # These metrics are calculated on the full dataset sent to the models,
+        # not on the filtered processed_transactions
+        print(f"\nMetrics from models (calculated on {rgcn_results['summary']['total_transactions']} transactions):")
+        print(f"  RGCN - F1: {rgcn_metrics.get('f1')}, Recall: {rgcn_metrics.get('recall')}, AUC: {rgcn_metrics.get('auc')}")
+        print(f"  ERGCN - F1: {ergcn_metrics.get('f1')}, Recall: {ergcn_metrics.get('recall')}, AUC: {ergcn_metrics.get('auc')}")
+        
+        # Calculate ERGCN summary statistics from processed transactions
+        # Note: These counts may differ from model results if transactions were filtered
         ergcn_fraud_count = sum(1 for tx in processed_transactions if tx['ERGCN_Prediction'] == 1)
         ergcn_legitimate_count = len(processed_transactions) - ergcn_fraud_count
-        ergcn_fraud_rate = ergcn_fraud_count / len(processed_transactions) if len(processed_transactions) > 0 else 0.0
+        ergcn_fraud_rate = ergcn_fraud_count / len(processed_transactions) * 100 if len(processed_transactions) > 0 else 0.0
+        
+        # Use model summary for RGCN (more accurate as it's from the full dataset)
+        # But also calculate from processed for consistency check
+        rgcn_fraud_from_processed = sum(1 for tx in processed_transactions if tx['RGCN_Prediction'] == 1)
+        
+        if skipped_count > 0:
+            print(f"\nWARNING: Summary statistics may differ due to {skipped_count} skipped transactions")
+            print(f"  Model processed: {rgcn_results['summary']['total_transactions']} transactions")
+            print(f"  Returned to API: {len(processed_transactions)} transactions")
         
         result = AnalysisResult(
             transactions=processed_transactions,
             metrics={
                 "RGCN": {
-                    "recall": rgcn_metrics['recall'],
-                    "f1": rgcn_metrics['f1'],
-                    "auc": rgcn_metrics['auc']
+                    "recall": rgcn_metrics.get('recall'),
+                    "f1": rgcn_metrics.get('f1'),
+                    "auc": rgcn_metrics.get('auc')
                 },
                 "ERGCN": {
-                    "recall": ergcn_metrics['recall'],
-                    "f1": ergcn_metrics['f1'],
-                    "auc": ergcn_metrics['auc']
+                    "recall": ergcn_metrics.get('recall'),
+                    "f1": ergcn_metrics.get('f1'),
+                    "auc": ergcn_metrics.get('auc')
                 },
                 "summary": {
                     "total_transactions": int(rgcn_results['summary']['total_transactions']),

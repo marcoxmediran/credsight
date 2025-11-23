@@ -39,18 +39,18 @@ type AnalysisResult = {
   error?: string
 }
 
-// Connect to FastAPI backend (Colab/Local/AWS)
-async function callModelInference(transactions: TransactionData[]): Promise<AnalysisResult> {
+// Connect to FastAPI backend - now accepts CSV file directly
+async function callModelInference(csvFile: File): Promise<AnalysisResult> {
   const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:8000'
   
   try {
+    // Create FormData to send file
+    const formData = new FormData()
+    formData.append('file', csvFile)
 
     const response = await fetch(`${BACKEND_URL}/analyze`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ transactions })
+      body: formData
     })
     
     let result: AnalysisResult
@@ -74,7 +74,7 @@ async function callModelInference(transactions: TransactionData[]): Promise<Anal
     
     // Map backend field names to frontend expectations
     if (result.transactions) {
-      result.transactions = result.transactions.map((t: BackendTransaction) => ({
+      result.transactions = result.transactions.map((t: any) => ({
         ...t,
         RGCN: t.RGCN_Prediction,
         ERGCN: t.ERGCN_Prediction,
@@ -98,16 +98,25 @@ async function callModelInference(transactions: TransactionData[]): Promise<Anal
 
 export async function POST(request: NextRequest) {
   try {
-    const { transactions } = await request.json()
+    // Get CSV file from FormData
+    const formData = await request.formData()
+    const file = formData.get('file') as File
     
-    if (!transactions || !Array.isArray(transactions)) {
+    if (!file) {
       return NextResponse.json(
-        { error: 'Invalid transaction data' },
+        { error: 'No file provided' },
         { status: 400 }
       )
     }
 
-    const result = await callModelInference(transactions)
+    if (!file.name.endsWith('.csv')) {
+      return NextResponse.json(
+        { error: 'File must be a CSV file' },
+        { status: 400 }
+      )
+    }
+
+    const result = await callModelInference(file)
     
     return NextResponse.json(result)
   } catch (error) {

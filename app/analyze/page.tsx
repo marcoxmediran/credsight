@@ -83,15 +83,18 @@ export default function AnalyzePage() {
   const [analysisError, setAnalysisError] = useState<string | null>(null)
   const [ergcnWarning, setErgcnWarning] = useState<string | null>(null)
 
-  const analyzeWithModels = async (transactions: TransactionData[]) => {
+  const analyzeWithModels = async (csvFile: File) => {
     setIsAnalyzing(true)
     setAnalysisError(null)
     setErgcnWarning(null)
     try {
+      // Send CSV file directly to backend via FormData
+      const formData = new FormData()
+      formData.append('file', csvFile)
+
       const response = await fetch('/api/analyze', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ transactions })
+        body: formData
       })
       const payload = await response.json()
       
@@ -125,7 +128,7 @@ export default function AnalyzePage() {
   }
 
   const handleFileUpload = useCallback((file: File) => {
-    if (file.type !== "text/csv") {
+    if (file.type !== "text/csv" && !file.name.endsWith('.csv')) {
       alert("Please upload a CSV file")
       return
     }
@@ -136,135 +139,50 @@ export default function AnalyzePage() {
       alert(`File too large (${fileSizeMB.toFixed(1)}MB). Maximum supported size is 800MB. Please split your file or use a smaller sample.`)
       return
     } else if (fileSizeMB > 100) {
-      const proceed = confirm(`Large file detected (${fileSizeMB.toFixed(1)}MB). Processing may take several minutes and could cause browser slowdown. Continue?`)
+      const proceed = confirm(`Large file detected (${fileSizeMB.toFixed(1)}MB). Processing may take several minutes. Continue?`)
       if (!proceed) return
     }
 
+    // Quick validation: Read first few lines to check for TransactionID column
     setIsProcessingFile(true)
     setProcessingProgress(0)
 
     const reader = new FileReader()
     
-    reader.onprogress = (e) => {
-      if (e.lengthComputable) {
-        const progress = (e.loaded / e.total) * 30
-        setProcessingProgress(progress)
-      }
-    }
-    
     reader.onload = async (e) => {
-      setProcessingProgress(30)
-      
       try {
         const text = e.target?.result as string
-        setProcessingProgress(40)
+        const lines = text.split('\n').filter(line => line.trim())
         
-        // Process in smaller chunks for very large files
-        const lines = text.split('\n')
-        const headers = lines[0].split(',').map(h => h.trim())
-        
-        const transactionIdIndex = headers.findIndex((h) => h.toLowerCase().includes("transactionid"))
-        const isFraudIndex = headers.findIndex((h) => h.toLowerCase().includes("isfraud") || h.toLowerCase().includes("truelabel"))
+        if (lines.length < 2) {
+          alert("CSV file must contain at least a header and one data row")
+          setIsProcessingFile(false)
+          return
+        }
 
-        if (transactionIdIndex === -1) {
+        // Quick validation: Check for TransactionID column
+        const headers = lines[0].split(',').map(h => h.trim().toLowerCase())
+        const hasTransactionID = headers.some(h => h.includes('transactionid'))
+        
+        if (!hasTransactionID) {
           alert("CSV must contain TransactionID column")
           setIsProcessingFile(false)
           return
         }
 
-        // Check if ground truth column exists and validate values
-        let hasGroundTruthData = false
-        if (isFraudIndex !== -1) {
-          // Sample a few rows to check if values are 0 or 1
-          const sampleRows = lines.slice(1, Math.min(11, lines.length))
-          const validGroundTruth = sampleRows.every(row => {
-            if (!row.trim()) return true
-            const values = row.split(',').map(v => v.trim())
-            const value = values[isFraudIndex]
-            return value === '0' || value === '1' || value.toLowerCase() === 'true' || value.toLowerCase() === 'false'
-          })
-          
-          if (validGroundTruth) {
-            hasGroundTruthData = true
-          } else {
-            alert("Ground truth column (TrueLabel/IsFraud) must contain only 0 or 1 values. Treating as No Ground Truth Protocol.")
-            hasGroundTruthData = false
-          }
-        }
-        
-        setHasGroundTruth(hasGroundTruthData)
+        // Check if ground truth column exists (optional)
+        const hasGroundTruth = headers.some(h => h.includes('isfraud') || h.includes('truelabel'))
+        setHasGroundTruth(hasGroundTruth)
 
-        setProcessingProgress(50)
-        
-        // Use smaller chunk size for large files
-        const chunkSize = fileSizeMB > 800 ? 200 : fileSizeMB > 400 ? 500 : 1000
-        const parsedData: TransactionData[] = []
-        const totalRows = lines.length - 1
-        
-        // Process data in chunks with longer delays for UI responsiveness
-        for (let i = 1; i < lines.length; i += chunkSize) {
-          const chunk = lines.slice(i, Math.min(i + chunkSize, lines.length))
-          
-          const chunkData = chunk
-            .filter(row => row.trim())
-            .map((row) => {
-              try {
-                const values = row.split(',').map(v => v.trim())
-                const transaction: any = {
-                  TransactionID: Number.parseInt(values[transactionIdIndex]) || 0,
-                }
-                
-                if (hasGroundTruthData) {
-                  const fraudValue = values[isFraudIndex]?.toLowerCase() === "true" || values[isFraudIndex] === "1" ? 1 : 0
-                  transaction.TrueLabel = fraudValue  // For frontend compatibility
-                  transaction.isFraud = fraudValue    // For backend compatibility
-                }
-                
-                // Parse all other columns from CSV
-                headers.forEach((header, index) => {
-                  if (index !== transactionIdIndex && index !== isFraudIndex) {
-                    const value = values[index]
-                    // Try to parse as number, otherwise keep as string
-                    const numValue = Number(value)
-                    transaction[header] = isNaN(numValue) ? value : numValue
-                  }
-                })
-                
-                return transaction
-              } catch {
-                return null
-              }
-            })
-            .filter(Boolean) as TransactionData[]
-          
-          parsedData.push(...chunkData)
-          
-          // Update progress
-          const progress = 50 + ((i / totalRows) * 40)
-          setProcessingProgress(Math.min(progress, 90))
-          
-          // Longer delay for large files to prevent browser freeze
-          const delay = fileSizeMB > 800 ? 100 : fileSizeMB > 400 ? 50 : 20
-          await new Promise(resolve => setTimeout(resolve, delay))
-        }
-
-        setProcessingProgress(95)
-        
-        // Limit data for frontend performance (sample if too large)
-        let finalData = parsedData
-        if (parsedData.length > 800000) {
-          const sampleSize = 100000
-          const step = Math.floor(parsedData.length / sampleSize)
-          finalData = parsedData.filter((_, index) => index % step === 0).slice(0, sampleSize)
-          alert(`Dataset too large (${parsedData.length} rows). Showing sample of ${finalData.length} transactions.`)
-        }
-        
+        setProcessingProgress(100)
         setHasUploadedCSV(true)
-        await analyzeWithModels(finalData)
+        
+        // Send file directly to backend - no parsing/transformation needed!
+        await analyzeWithModels(file)
         
       } catch (error) {
-        console.error('File processing error:', error)
-        alert("Error processing file. File may be too large or corrupted.")
+        console.error('File validation error:', error)
+        alert("Error validating file. Please ensure it's a valid CSV file.")
       } finally {
         setIsProcessingFile(false)
         setProcessingProgress(0)
@@ -272,12 +190,17 @@ export default function AnalyzePage() {
     }
     
     reader.onerror = () => {
-      alert("Error reading file. Please try again with a smaller file.")
+      alert("Error reading file. Please try again.")
       setIsProcessingFile(false)
       setProcessingProgress(0)
     }
     
-    reader.readAsText(file)
+    // Only read first 10KB for validation (header + a few rows)
+    const blob = file.slice(0, 10240) // First 10KB
+    reader.readAsText(blob)
+    
+    // After validation, send the full file
+    // Note: We validate first, then send the full file in analyzeWithModels
   }, [])
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -736,11 +659,7 @@ export default function AnalyzePage() {
                       <Download className="mr-2 h-4 w-4" />
                       Download Results
                     </Button>
-                    {!analysisResult && data.length > 0 && (
-                      <Button onClick={() => analyzeWithModels(data)} disabled={isAnalyzing}>
-                        {isAnalyzing ? 'Analyzing by both models R-GCN and ERGCN...' : 'Analyze with Models'}
-                      </Button>
-                    )}
+                    {/* Note: Analysis now happens automatically on file upload */}
                   </div>
                 </div>
               </CardContent>
