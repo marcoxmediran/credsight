@@ -492,6 +492,11 @@ export default function AnalyzePage() {
   const hasModelMetrics = (metrics?: ModelMetrics | null) =>
     !!metrics && (hasNonZeroMetric(metrics.recall) || hasNonZeroMetric(metrics.f1) || hasNonZeroMetric(metrics.auc))
 
+  const showGroundTruthColumn = Boolean(
+    hasGroundTruth &&
+    (hasModelMetrics(metrics?.RGCN) || hasModelMetrics(metrics?.ERGCN))
+  )
+
   const showPerformanceComparison = Boolean(
     metrics &&
     hasGroundTruth &&
@@ -840,12 +845,11 @@ export default function AnalyzePage() {
                     <CardDescription>Summary of fraud detection results</CardDescription>
                   </CardHeader>
                   <CardContent>
-                  {hasGroundTruth ? (
-                    // Protocol 1: With Ground Truth - Three Column Layout
-                    <div className="space-y-6">
-                      <div className="grid gap-6 md:grid-cols-3 divide-x divide-border">
-                        {/* Ground Truth Column */}
-                        <div className="space-y-4 pr-6">
+                  <div className="space-y-6">
+                    <div className={`grid gap-6 ${showGroundTruthColumn ? "md:grid-cols-3 divide-x divide-border" : "md:grid-cols-2"}`}>
+                      {/* Ground Truth Column */}
+                      {showGroundTruthColumn && (
+                        <div className="space-y-4 pr-0 md:pr-6">
                           <h3 className="text-lg font-semibold text-gray-300 text-center">Ground Truth</h3>
                           <div className="space-y-3">
                             <div className="rounded-lg border border-border bg-card p-4">
@@ -866,10 +870,11 @@ export default function AnalyzePage() {
                             </div>
                           </div>
                         </div>
+                      )}
 
                         {/* ERGCN Results Column */}
                         {analysisResult && (
-                          <div className="space-y-4 px-6">
+                          <div className={`space-y-4 ${showGroundTruthColumn ? "px-0 md:px-6" : "pr-0 md:pr-6"}`}>
                             <h3 className="text-lg font-semibold text-purple-500 text-center">ERGCN Predictions</h3>
                             <div className="space-y-3">
                               <div className="rounded-lg border border-border bg-card p-4">
@@ -890,7 +895,7 @@ export default function AnalyzePage() {
 
                         {/* R-GCN Results Column */}
                         {analysisResult && (
-                          <div className="space-y-4 pl-6">
+                          <div className={`space-y-4 ${showGroundTruthColumn ? "pl-0 md:pl-6" : "pl-0 md:pl-6"}`}>
                             <h3 className="text-lg font-semibold text-blue-500 text-center">R-GCN Predictions</h3>
                             <div className="space-y-3">
                               <div className="rounded-lg border border-border bg-card p-4">
@@ -909,59 +914,8 @@ export default function AnalyzePage() {
                           </div>
                         )}
 
-                      </div>
                     </div>
-                  ) : (
-                    // Protocol 2: Without Ground Truth
-                    <div className="space-y-6">
-                      <div className="grid gap-4 md:grid-cols-1">
-                        <div className="rounded-lg border border-border bg-card p-4">
-                          <p className="text-sm text-muted-foreground">Total Records</p>
-                          <p className="mt-2 text-3xl font-bold">{stats.total}</p>
-                        </div>
-                      </div>
-                      {analysisResult && (
-                        <>
-                          <div className="grid gap-4 md:grid-cols-2">
-                            <div className="space-y-4">
-                              <h3 className="text-lg font-semibold text-purple-500">ERGCN Model Predictions</h3>
-                              <div className="grid gap-4 md:grid-cols-3">
-                                <div className="rounded-lg border border-border bg-card p-4">
-                                  <p className="text-sm text-muted-foreground">Legitimate</p>
-                                  <p className="mt-2 text-2xl font-bold text-green-500">{stats.ergcnLegitimate}</p>
-                                </div>
-                                <div className="rounded-lg border border-border bg-card p-4">
-                                  <p className="text-sm text-muted-foreground">Fraud</p>
-                                  <p className="mt-2 text-2xl font-bold text-red-500">{stats.ergcnFraud}</p>
-                                </div>
-                                <div className="rounded-lg border border-border bg-card p-4">
-                                  <p className="text-sm text-muted-foreground">Fraud Rate</p>
-                                  <p className="mt-2 text-2xl font-bold">{stats.ergcnFraudRate}%</p>
-                                </div>
-                              </div>
-                            </div>
-                            <div className="space-y-4">
-                              <h3 className="text-lg font-semibold text-blue-500">R-GCN Model Predictions</h3>
-                              <div className="grid gap-4 md:grid-cols-3">
-                                <div className="rounded-lg border border-border bg-card p-4">
-                                  <p className="text-sm text-muted-foreground">Legitimate</p>
-                                  <p className="mt-2 text-2xl font-bold text-green-500">{stats.rgcnLegitimate}</p>
-                                </div>
-                                <div className="rounded-lg border border-border bg-card p-4">
-                                  <p className="text-sm text-muted-foreground">Fraud</p>
-                                  <p className="mt-2 text-2xl font-bold text-red-500">{stats.rgcnFraud}</p>
-                                </div>
-                                <div className="rounded-lg border border-border bg-card p-4">
-                                  <p className="text-sm text-muted-foreground">Fraud Rate</p>
-                                  <p className="mt-2 text-2xl font-bold">{stats.rgcnFraudRate}%</p>
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  )}
+                  </div>
                 </CardContent>
                 </Card>
               </AnimatedCard>
