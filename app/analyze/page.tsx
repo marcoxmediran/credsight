@@ -486,6 +486,18 @@ export default function AnalyzePage() {
           : null,
   }
 
+  const metrics = analysisResult?.metrics
+
+  const hasNonZeroMetric = (value?: number | null) => typeof value === "number" && value !== 0
+  const hasModelMetrics = (metrics?: ModelMetrics | null) =>
+    !!metrics && (hasNonZeroMetric(metrics.recall) || hasNonZeroMetric(metrics.f1) || hasNonZeroMetric(metrics.auc))
+
+  const showPerformanceComparison = Boolean(
+    metrics &&
+    hasGroundTruth &&
+    (hasModelMetrics(metrics.RGCN) || hasModelMetrics(metrics.ERGCN))
+  )
+
   const formatMetricPercentage = (value?: number | null) => {
     if (typeof value !== "number" || Number.isNaN(value)) return "N/A"
     return `${(value * 100).toFixed(2)}%`
@@ -956,16 +968,16 @@ export default function AnalyzePage() {
             )}
 
             {/* Model Evaluation Section */}
-            {analysisResult && hasGroundTruth && (
+            {showPerformanceComparison && (
               <AnimatedCard delay={600}>
                 <Card>
                   <CardHeader>
                     <CardTitle>Model Performance Comparison</CardTitle>
                     <CardDescription>
                       Comparative analysis of R-GCN vs ERGCN models
-                      {analysisResult.metrics.p_value < 0.05 && (
+                      {metrics?.p_value !== undefined && metrics.p_value < 0.05 && (
                         <span className="ml-2 text-green-600 font-semibold">
-                          (Statistically Significant, p = {analysisResult.metrics.p_value.toFixed(4)})
+                          (Statistically Significant, p = {metrics.p_value.toFixed(4)})
                         </span>
                       )}
                     </CardDescription>
@@ -977,15 +989,15 @@ export default function AnalyzePage() {
                         <div className="grid gap-3">
                           <div className="flex justify-between items-center p-3 bg-card rounded-lg border">
                             <span className="text-sm text-muted-foreground">Recall</span>
-                            <span className="font-bold">{formatMetricPercentage(analysisResult.metrics.ERGCN?.recall)}</span>
+                            <span className="font-bold">{formatMetricPercentage(metrics?.ERGCN?.recall)}</span>
                           </div>
                           <div className="flex justify-between items-center p-3 bg-card rounded-lg border">
                             <span className="text-sm text-muted-foreground">F1 Score</span>
-                            <span className="font-bold">{formatMetricPercentage(analysisResult.metrics.ERGCN?.f1)}</span>
+                            <span className="font-bold">{formatMetricPercentage(metrics?.ERGCN?.f1)}</span>
                           </div>
                           <div className="flex justify-between items-center p-3 bg-card rounded-lg border">
                             <span className="text-sm text-muted-foreground">AUC</span>
-                            <span className="font-bold">{formatMetricPercentage(analysisResult.metrics.ERGCN?.auc)}</span>
+                            <span className="font-bold">{formatMetricPercentage(metrics?.ERGCN?.auc)}</span>
                           </div>
                         </div>
                       </div>
@@ -995,15 +1007,15 @@ export default function AnalyzePage() {
                         <div className="grid gap-3">
                           <div className="flex justify-between items-center p-3 bg-card rounded-lg border">
                             <span className="text-sm text-muted-foreground">Recall</span>
-                          <span className="font-bold">{formatMetricPercentage(analysisResult.metrics.RGCN.recall)}</span>
+                          <span className="font-bold">{formatMetricPercentage(metrics?.RGCN.recall)}</span>
                           </div>
                           <div className="flex justify-between items-center p-3 bg-card rounded-lg border">
                             <span className="text-sm text-muted-foreground">F1 Score</span>
-                          <span className="font-bold">{formatMetricPercentage(analysisResult.metrics.RGCN.f1)}</span>
+                          <span className="font-bold">{formatMetricPercentage(metrics?.RGCN.f1)}</span>
                           </div>
                           <div className="flex justify-between items-center p-3 bg-card rounded-lg border">
                             <span className="text-sm text-muted-foreground">AUC</span>
-                          <span className="font-bold">{formatMetricPercentage(analysisResult.metrics.RGCN.auc)}</span>
+                          <span className="font-bold">{formatMetricPercentage(metrics?.RGCN.auc)}</span>
                           </div>
                         </div>
                       </div>
@@ -1013,9 +1025,9 @@ export default function AnalyzePage() {
                       <h4 className="font-semibold mb-2">Performance Difference (ERGCN - R-GCN)</h4>
                       <p className="text-xs text-muted-foreground mb-3">Positive values indicate ERGCN performs better (percentage points)</p>
                       {(() => {
-                        const recallDelta = buildDeltaDisplay(analysisResult.metrics.ERGCN?.recall, analysisResult.metrics.RGCN.recall)
-                        const f1Delta = buildDeltaDisplay(analysisResult.metrics.ERGCN?.f1, analysisResult.metrics.RGCN.f1)
-                        const aucDelta = buildDeltaDisplay(analysisResult.metrics.ERGCN?.auc, analysisResult.metrics.RGCN.auc)
+                        const recallDelta = buildDeltaDisplay(metrics?.ERGCN?.recall, metrics?.RGCN.recall)
+                        const f1Delta = buildDeltaDisplay(metrics?.ERGCN?.f1, metrics?.RGCN.f1)
+                        const aucDelta = buildDeltaDisplay(metrics?.ERGCN?.auc, metrics?.RGCN.auc)
                         return (
                           <div className="grid gap-2 md:grid-cols-3">
                             <div className="text-center">
