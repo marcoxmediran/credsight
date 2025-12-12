@@ -14,7 +14,7 @@ from torch_geometric.nn import HeteroConv, SAGEConv, Linear
 
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.metrics import (
-    f1_score, recall_score, roc_auc_score
+    f1_score, recall_score, roc_auc_score, confusion_matrix
 )
 
 warnings.filterwarnings('ignore')
@@ -427,6 +427,9 @@ def analyze_transactions(csv_data: str, model_path: str = DEFAULT_MODEL_PATH):
     print(test_preds[:10])
     
     print("\nPredictions generated for all nodes in the input data.")
+
+    # Create confusion matrix
+    cm = confusion_matrix(test_labels, test_preds)
     
     # Create results DataFrame
     predictions_df = pd.DataFrame({
@@ -439,6 +442,7 @@ def analyze_transactions(csv_data: str, model_path: str = DEFAULT_MODEL_PATH):
     # Return results in the format expected by the API
     results = {
         'transactions': predictions_df.to_dict('records'),
+        'confusion_matrix': cm,
         'metrics': {
             'loss': test_loss,
             'f1': test_f1,
