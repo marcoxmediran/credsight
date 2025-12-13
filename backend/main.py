@@ -182,6 +182,11 @@ async def analyze_transactions_endpoint(file: UploadFile = File(...)):
         print(f"\nMetrics from models (calculated on {rgcn_results['summary']['total_transactions']} transactions):")
         print(f"  RGCN - F1: {rgcn_metrics.get('f1')}, Recall: {rgcn_metrics.get('recall')}, AUC: {rgcn_metrics.get('auc')}")
         print(f"  ERGCN - F1: {ergcn_metrics.get('f1')}, Recall: {ergcn_metrics.get('recall')}, AUC: {ergcn_metrics.get('auc')}")
+        print(f"\nConfusion matrices from both models")
+        print(f"RGCN")
+        print(f"{rgcn_results['confusion_matrix']}")
+        print(f"ERGCN")
+        print(f"{ergcn_results['confusion_matrix']}")
         
         # Calculate ERGCN summary statistics from processed transactions
         # Note: These counts may differ from model results if transactions were filtered
