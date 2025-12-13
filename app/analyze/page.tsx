@@ -42,11 +42,22 @@ type SummaryMetrics = {
   fraud_rate_of_ERGCN?: number
 }
 
+type ConfusionMatrix = {
+  true_negative: number
+  false_positive: number
+  false_negative: number
+  true_positive: number
+} | null
+
 type AnalysisMetrics = {
   RGCN: ModelMetrics
   ERGCN: ModelMetrics | null
   p_value: number
   summary?: SummaryMetrics
+  confusion_matrices?: {
+    RGCN: ConfusionMatrix
+    ERGCN: ConfusionMatrix
+  }
 }
 
 type AnalysisResult = {
@@ -106,6 +117,13 @@ export default function AnalyzePage() {
       
       const result: AnalysisResult = payload
       const containsGroundTruth = result.transactions?.some((tx) => tx.TrueLabel !== null && tx.TrueLabel !== undefined)
+      
+      // Debug: Log confusion matrices to verify they're present
+      if (result.metrics?.confusion_matrices) {
+        console.log('Confusion matrices received:', result.metrics.confusion_matrices)
+      } else {
+        console.log('No confusion matrices found in response')
+      }
       
       setAnalysisResult(result)
       setData(result.transactions)
@@ -501,6 +519,12 @@ export default function AnalyzePage() {
     metrics &&
     hasGroundTruth &&
     (hasModelMetrics(metrics.RGCN) || hasModelMetrics(metrics.ERGCN))
+  )
+
+  const showConfusionMatrices = Boolean(
+    hasGroundTruth &&
+    metrics?.confusion_matrices &&
+    (metrics.confusion_matrices.RGCN || metrics.confusion_matrices.ERGCN)
   )
 
   const formatMetricPercentage = (value?: number | null) => {
@@ -1005,6 +1029,89 @@ export default function AnalyzePage() {
                           </div>
                         )
                       })()}
+                    </div>
+                  </CardContent>
+                </Card>
+              </AnimatedCard>
+            )}
+
+            {/* Confusion Matrix Section */}
+            {showConfusionMatrices && (
+              <AnimatedCard delay={700}>
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Confusion Matrices</CardTitle>
+                    <CardDescription>
+                      Detailed breakdown of model predictions vs actual labels
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid gap-6 md:grid-cols-2">
+                      {/* ERGCN Confusion Matrix */}
+                      {metrics.confusion_matrices.ERGCN && (
+                        <div className="space-y-4">
+                          <h3 className="text-lg font-semibold text-purple-500 text-center">ERGCN Model</h3>
+                          <div className="grid grid-cols-2 gap-2 max-w-md mx-auto">
+                            {/* Top-left: True Negative */}
+                            <div className="bg-green-500/20 border-2 border-green-500 rounded-lg p-4 text-center">
+                              <p className="text-xs font-semibold text-green-400 mb-1">TN</p>
+                              <p className="text-2xl font-bold text-green-400">{metrics.confusion_matrices.ERGCN.true_negative}</p>
+                              <p className="text-xs text-muted-foreground mt-1">True Negative</p>
+                            </div>
+                            {/* Top-right: False Positive */}
+                            <div className="bg-red-500/20 border-2 border-red-500 rounded-lg p-4 text-center">
+                              <p className="text-xs font-semibold text-red-400 mb-1">FP</p>
+                              <p className="text-2xl font-bold text-red-400">{metrics.confusion_matrices.ERGCN.false_positive}</p>
+                              <p className="text-xs text-muted-foreground mt-1">False Positive</p>
+                            </div>
+                            {/* Bottom-left: False Negative */}
+                            <div className="bg-red-500/20 border-2 border-red-500 rounded-lg p-4 text-center">
+                              <p className="text-xs font-semibold text-red-400 mb-1">FN</p>
+                              <p className="text-2xl font-bold text-red-400">{metrics.confusion_matrices.ERGCN.false_negative}</p>
+                              <p className="text-xs text-muted-foreground mt-1">False Negative</p>
+                            </div>
+                            {/* Bottom-right: True Positive */}
+                            <div className="bg-green-500/20 border-2 border-green-500 rounded-lg p-4 text-center">
+                              <p className="text-xs font-semibold text-green-400 mb-1">TP</p>
+                              <p className="text-2xl font-bold text-green-400">{metrics.confusion_matrices.ERGCN.true_positive}</p>
+                              <p className="text-xs text-muted-foreground mt-1">True Positive</p>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* RGCN Confusion Matrix */}
+                      {metrics.confusion_matrices.RGCN && (
+                        <div className="space-y-4">
+                          <h3 className="text-lg font-semibold text-blue-500 text-center">R-GCN Model</h3>
+                          <div className="grid grid-cols-2 gap-2 max-w-md mx-auto">
+                            {/* Top-left: True Negative */}
+                            <div className="bg-green-500/20 border-2 border-green-500 rounded-lg p-4 text-center">
+                              <p className="text-xs font-semibold text-green-400 mb-1">TN</p>
+                              <p className="text-2xl font-bold text-green-400">{metrics.confusion_matrices.RGCN.true_negative}</p>
+                              <p className="text-xs text-muted-foreground mt-1">True Negative</p>
+                            </div>
+                            {/* Top-right: False Positive */}
+                            <div className="bg-red-500/20 border-2 border-red-500 rounded-lg p-4 text-center">
+                              <p className="text-xs font-semibold text-red-400 mb-1">FP</p>
+                              <p className="text-2xl font-bold text-red-400">{metrics.confusion_matrices.RGCN.false_positive}</p>
+                              <p className="text-xs text-muted-foreground mt-1">False Positive</p>
+                            </div>
+                            {/* Bottom-left: False Negative */}
+                            <div className="bg-red-500/20 border-2 border-red-500 rounded-lg p-4 text-center">
+                              <p className="text-xs font-semibold text-red-400 mb-1">FN</p>
+                              <p className="text-2xl font-bold text-red-400">{metrics.confusion_matrices.RGCN.false_negative}</p>
+                              <p className="text-xs text-muted-foreground mt-1">False Negative</p>
+                            </div>
+                            {/* Bottom-right: True Positive */}
+                            <div className="bg-green-500/20 border-2 border-green-500 rounded-lg p-4 text-center">
+                              <p className="text-xs font-semibold text-green-400 mb-1">TP</p>
+                              <p className="text-2xl font-bold text-green-400">{metrics.confusion_matrices.RGCN.true_positive}</p>
+                              <p className="text-xs text-muted-foreground mt-1">True Positive</p>
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </CardContent>
                 </Card>
