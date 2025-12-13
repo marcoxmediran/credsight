@@ -188,6 +188,43 @@ async def analyze_transactions_endpoint(file: UploadFile = File(...)):
         print(f"ERGCN")
         print(f"{ergcn_results['confusion_matrix']}")
         
+        # Convert confusion matrices from numpy arrays to labeled objects
+        def convert_confusion_matrix(cm):
+            """Convert 2x2 numpy confusion matrix to labeled object format.
+            
+            Args:
+                cm: numpy array of shape (2, 2) with format [[TN, FP], [FN, TP]]
+                    or None if not available
+            
+            Returns:
+                dict with keys: true_negative, false_positive, false_negative, true_positive
+                or None if cm is None/empty
+            """
+            if cm is None:
+                return None
+            try:
+                # Handle numpy array or list/tuple - convert to Python int for JSON serialization
+                # Format: [[TN, FP], [FN, TP]]
+                # Access as 2D array and convert to int
+                return {
+                    "true_negative": int(cm[0][0]),
+                    "false_positive": int(cm[0][1]),
+                    "false_negative": int(cm[1][0]),
+                    "true_positive": int(cm[1][1])
+                }
+            except (IndexError, TypeError, ValueError, AttributeError) as e:
+                print(f"Warning: Could not convert confusion matrix: {e}")
+                return None
+        
+        # Extract and convert confusion matrices
+        rgcn_cm = rgcn_results.get('confusion_matrix')
+        ergcn_cm = ergcn_results.get('confusion_matrix')
+        
+        confusion_matrices = {
+            "RGCN": convert_confusion_matrix(rgcn_cm),
+            "ERGCN": convert_confusion_matrix(ergcn_cm)
+        }
+        
         # Calculate ERGCN summary statistics from processed transactions
         # Note: These counts may differ from model results if transactions were filtered
         ergcn_fraud_count = sum(1 for tx in processed_transactions if tx['ERGCN_Prediction'] == 1)
@@ -203,30 +240,45 @@ async def analyze_transactions_endpoint(file: UploadFile = File(...)):
             print(f"  Model processed: {rgcn_results['summary']['total_transactions']} transactions")
             print(f"  Returned to API: {len(processed_transactions)} transactions")
         
+        # Build metrics dict with confusion matrices
+        metrics_dict = {
+            "RGCN": {
+                "recall": rgcn_metrics.get('recall'),
+                "f1": rgcn_metrics.get('f1'),
+                "auc": rgcn_metrics.get('auc')
+            },
+            "ERGCN": {
+                "recall": ergcn_metrics.get('recall'),
+                "f1": ergcn_metrics.get('f1'),
+                "auc": ergcn_metrics.get('auc')
+            },
+            "summary": {
+                "total_transactions": int(rgcn_results['summary']['total_transactions']),
+                "fraud_detected_by_RGCN": int(rgcn_results['summary']['fraud_detected_by_RGCN']),
+                "legitimate_detected_by_RGCN": int(rgcn_results['summary']['legitimate_detected_by_RGCN']),
+                "fraud_rate_of_RGCN": float(rgcn_results['summary']['fraud_rate']),
+                "fraud_detected_by_ERGCN": ergcn_fraud_count,
+                "legitimate_detected_by_ERGCN": ergcn_legitimate_count,
+                "fraud_rate_of_ERGCN": float(ergcn_fraud_rate)
+            },
+            "confusion_matrices": confusion_matrices
+        }
+        
+        # Debug: Print confusion matrices before creating result
+        print(f"DEBUG: Confusion matrices being added: {confusion_matrices}")
+        print(f"DEBUG: Metrics dict keys: {metrics_dict.keys()}")
+        
         result = AnalysisResult(
             transactions=processed_transactions,
-            metrics={
-                "RGCN": {
-                    "recall": rgcn_metrics.get('recall'),
-                    "f1": rgcn_metrics.get('f1'),
-                    "auc": rgcn_metrics.get('auc')
-                },
-                "ERGCN": {
-                    "recall": ergcn_metrics.get('recall'),
-                    "f1": ergcn_metrics.get('f1'),
-                    "auc": ergcn_metrics.get('auc')
-                },
-                "summary": {
-                    "total_transactions": int(rgcn_results['summary']['total_transactions']),
-                    "fraud_detected_by_RGCN": int(rgcn_results['summary']['fraud_detected_by_RGCN']),
-                    "legitimate_detected_by_RGCN": int(rgcn_results['summary']['legitimate_detected_by_RGCN']),
-                    "fraud_rate_of_RGCN": float(rgcn_results['summary']['fraud_rate']),
-                    "fraud_detected_by_ERGCN": ergcn_fraud_count,
-                    "legitimate_detected_by_ERGCN": ergcn_legitimate_count,
-                    "fraud_rate_of_ERGCN": float(ergcn_fraud_rate)
-                }
-            }
+            metrics=metrics_dict
         )
+        
+        # Debug: Verify confusion_matrices are in the result
+        print(f"DEBUG: Result metrics keys: {result.metrics.keys()}")
+        if 'confusion_matrices' in result.metrics:
+            print(f"DEBUG: Confusion matrices in result: {result.metrics['confusion_matrices']}")
+        else:
+            print("DEBUG: WARNING - confusion_matrices NOT in result.metrics!")
         
         # Print completion message with proper None handling
         rgcn_f1 = result.metrics['RGCN']['f1']
