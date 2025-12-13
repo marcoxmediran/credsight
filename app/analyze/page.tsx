@@ -772,11 +772,11 @@ export default function AnalyzePage() {
                                 {hasGroundTruth && (
                                   <TableCell className="text-center">
                                     <div className="flex gap-1 justify-center">
-                                      <Badge variant={row.RGCN === row.TrueLabel ? "secondary" : "destructive"} className={row.RGCN === row.TrueLabel ? "bg-green-600 hover:bg-green-700" : "bg-red-600 hover:bg-red-700"}>
-                                        R-GCN {row.RGCN === row.TrueLabel ? "✓" : "✗"}
-                                      </Badge>
                                       <Badge variant={row.ERGCN === row.TrueLabel ? "secondary" : "destructive"} className={row.ERGCN === row.TrueLabel ? "bg-green-600 hover:bg-green-700" : "bg-red-600 hover:bg-red-700"}>
                                         ERGCN {row.ERGCN === row.TrueLabel ? "✓" : "✗"}
+                                      </Badge>
+                                      <Badge variant={row.RGCN === row.TrueLabel ? "secondary" : "destructive"} className={row.RGCN === row.TrueLabel ? "bg-green-600 hover:bg-green-700" : "bg-red-600 hover:bg-red-700"}>
+                                        R-GCN {row.RGCN === row.TrueLabel ? "✓" : "✗"}
                                       </Badge>
                                     </div>
                                   </TableCell>
