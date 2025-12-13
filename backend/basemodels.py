@@ -17,6 +17,15 @@ class ModelMetrics(BaseModel):
     f1: Optional[float]
     auc: Optional[float]
 
+class ConfusionMatrix(BaseModel):
+    true_negative: int
+    false_positive: int
+    false_negative: int
+    true_positive: int
+
 class AnalysisResult(BaseModel):
     transactions: List[Dict[str, Any]]
     metrics: Dict[str, Any]
+    
+    class Config:
+        extra = 'allow'  # Allow additional fields like confusion_matrices in metrics
