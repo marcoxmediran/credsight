@@ -144,11 +144,7 @@ def analyze_transactions(csv_data: str, model_path: str = DEFAULT_MODEL_PATH):
     for col in numerical_cols:
         df[col].fillna(col_medians[col], inplace=True)
     for col in categorical_cols:
-        mode_val = df[col].mode()
-        if len(mode_val) > 0:
-            df[col].fillna(mode_val[0], inplace=True)
-        else:
-            df[col].fillna('missing', inplace=True)
+        df[col].fillna(df[col].mode(), inplace=True)
     print("Missing values filled using pre-calculated statistics.")
     
     # Label Encode Categorical Features
